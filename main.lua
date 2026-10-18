@@ -740,10 +740,6 @@ createActionButton(YetiPage, "🔄 Đặt Lại Bộ Đếm Yeti (Reset Count)",
     lblYetiCount.Text = "0 con"
 end)
 
-createActionButton(YetiPage, "🔄 Reconnect Server (Làm Sạch Lỗi Click Bản Cũ)", Color3.fromRGB(200, 60, 60), function()
-    TeleportService:Teleport(game.PlaceId, Player)
-end)
-
 -- TRANG 3: HANG NÚI & TRỨNG
 local lblSelectedEgg = createInfoCard(TrailsPage, "🥚 Trứng Đã Chọn:", STATE.SelectedEggName)
 
@@ -955,6 +951,10 @@ createActionButton(SettingsPage, "📋 Quét & Gửi Log Debug Về Discord", Co
     pcall(function()
         loadstring(game:HttpGet("https://raw.githubusercontent.com/Vt47/ps99-scripts/main/dump_info.lua"))()
     end)
+end)
+
+createActionButton(SettingsPage, "🔄 Reconnect Server (Vào Lại Server Mới)", Color3.fromRGB(200, 60, 60), function()
+    TeleportService:Teleport(game.PlaceId, Player)
 end)
 
 pcall(function()
