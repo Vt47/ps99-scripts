@@ -104,7 +104,7 @@ local STATE = {
     -- [BÃI FARM TIỀN]
     AutoFarmMoney = true,
     AutoHitBreakables = true,
-    FarmCFrame = nil,
+    FarmCFrame = CFrame.new(-30114.6, 753.6, 30950.0),
 
     -- [TỌA ĐỘ 6 HANG NÚI]
     CaveCFrames = {
