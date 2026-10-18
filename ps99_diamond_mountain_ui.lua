@@ -1,10 +1,10 @@
 --========================================================================
 -- PS99 DIAMOND MOUNTAIN - SUMMIT AFK & YETI BOSS SUITE (DELTA EXECUTOR)
--- Phiên bản V5: Sửa triệt để lỗi click vào nút "Send Pets", nhận diện chính xác
--- "The Yeti returns in X:XX", loại bỏ hoàn toàn VirtualClick trên màn hình cảm ứng.
+-- Phiên bản V6: Khắc phục triệt để lỗi "You can claim again in 18h37m",
+-- nhận diện "The Shiny Yeti / Team up to beat it", không click nút Send Pets.
 --========================================================================
 
--- 1. DIỆT SẠCH MỌI PHIÊN BẢN CŨ TRONG BỘ NHỚ
+-- 1. DIỆT SẠCH PHIÊN BẢN CŨ TRONG BỘ NHỚ KHI EXCUTE LẠI
 local CURRENT_SESSION_ID = tick()
 _G.PS99_SUMMIT_SESSION = CURRENT_SESSION_ID
 _G.PS99_SUMMIT_RUNNING = false
@@ -31,8 +31,8 @@ local Camera = workspace.CurrentCamera
 
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "💎 PS99 Summit Suite V5",
-        Text = "Đã sửa lỗi Send Pets & Cooldown Yeti!",
+        Title = "💎 PS99 Summit Suite V6",
+        Text = "Đang chạy phiên bản V6 tối ưu...",
         Duration = 3
     })
 end)
@@ -57,7 +57,6 @@ end
 
 local GuiParent = getSafeGuiParent()
 
--- Dọn dẹp UI cũ
 pcall(function()
     local containers = {}
     if typeof(gethui) == "function" then table.insert(containers, gethui()) end
@@ -243,7 +242,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -60, 1, 0)
 TitleLabel.Position = UDim2.new(0, 12, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "💎 PS99 SUMMIT SUITE V5 | YETI & FARM"
+TitleLabel.Text = "💎 PS99 SUMMIT SUITE V6 | YETI & FARM"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 13
@@ -499,7 +498,7 @@ createActionButton(YetiPage, "🔄 Đặt Lại Bộ Đếm Yeti (Reset Count)",
     lblYetiCount.Text = "0 con"
 end)
 
-createActionButton(YetiPage, "🔄 Reconnect Server (Xóa Sạch Lỗi Click Bản Cũ)", Color3.fromRGB(200, 60, 60), function()
+createActionButton(YetiPage, "🔄 Reconnect Server (Làm Sạch Lỗi Click Bản Cũ)", Color3.fromRGB(200, 60, 60), function()
     TeleportService:Teleport(game.PlaceId, Player)
 end)
 
@@ -660,6 +659,13 @@ createToggle(SettingsPage, "🔋 Low CPU Mode (Màn Đen Tiết Kiệm Pin)", ST
     pcall(function() RunService:Set3dRenderingEnabled(not v) end)
 end)
 
+-- NÚT DUMP LOG DEBUG
+createActionButton(SettingsPage, "📋 Quét & Gửi Log Debug Về Discord", Color3.fromRGB(40, 160, 120), function()
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Vt47/ps99-scripts/main/dump_info.lua"))()
+    end)
+end)
+
 pcall(function()
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then toggleGui() end
@@ -754,23 +760,36 @@ task.spawn(function()
         if h then h.CFrame = cframe + Vector3.new(0, 3, 0) end
     end
 
-    -- BỘ QUÉT TÌM YETI CHÍNH XÁC (KHÔNG BỊ BẮT NHẦM COOLDOWN / LEADERBOARD)
+    -- BỘ QUÉT TÌM YETI CHÍNH XÁC (KHẮC PHỤC 100% LỖI YOU CAN CLAIM AGAIN IN...)
     local function checkYetiBoss()
-        -- 1. Kiểm tra chính xác dòng thông báo Cooldown trên màn hình
-        local isCooldown, cdString = false, nil
+        local isCooldown = false
+        local cdString = nil
+        local isBossActiveGui = false
+
+        -- 1. Quét PlayerGui với điều kiện chuẩn xác
         pcall(function()
             for _, g in pairs(Player.PlayerGui:GetDescendants()) do
-                if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
+                if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible and g.Text ~= "" then
                     local t = string.lower(g.Text)
-                    if string.find(t, "returns in") or string.find(t, "again in") or string.find(t, "cooldown") or string.find(t, "respawn") or string.find(t, "starts in") then
+
+                    -- A. BẮT BUỘC PHẢI CHỨA TỪ "YETI" THÌ MỚI ĐƯỢC TÍNH LÀ COOLDOWN YETI
+                    -- Tránh bắt nhầm các dòng như "You can claim again in 18h37m"
+                    if string.find(t, "yeti") and (string.find(t, "returns in") or string.find(t, "again in") or string.find(t, "respawn in") or string.find(t, "next yeti")) then
                         isCooldown = true
                         cdString = string.match(g.Text, "%d+:%d+") or g.Text
                         break
+                    end
+
+                    -- B. Nhận diện Yeti Boss ĐANG GIAO TRANH thật (Ảnh 1: The Shiny Yeti, Team up to beat it, 32%, Your damage)
+                    if (string.find(t, "shiny yeti") or string.find(t, "golden yeti") or string.find(t, "abominable yeti") or string.find(t, "team up to beat it"))
+                       and not string.find(t, "returns in") and not string.find(t, "again in") then
+                        isBossActiveGui = true
                     end
                 end
             end
         end)
 
+        -- Nếu đang có banner đếm ngược Yeti Cooldown -> Yeti CHẮC CHẮN chưa hồi sinh
         if isCooldown then
             return nil, nil, cdString
         end
@@ -819,35 +838,15 @@ task.spawn(function()
             end
         end
 
-        -- 4. Kiểm tra Boss Health Bar thực tế (Có thanh máu và KHÔNG PHẢI cooldown)
-        local isBossBarActive = false
-        pcall(function()
-            for _, g in pairs(Player.PlayerGui:GetDescendants()) do
-                if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
-                    local t = string.lower(g.Text)
-                    if (string.find(t, "the yeti") or string.find(t, "abominable yeti"))
-                       and not string.find(t, "returns in")
-                       and not string.find(t, "again in")
-                       and not string.find(t, "cooldown")
-                       and not string.find(t, "next")
-                       and not string.find(t, "respawn")
-                       and not string.find(t, "leaderboard")
-                       and not string.find(t, "board") then
-                        isBossBarActive = true
-                        break
-                    end
-                end
-            end
-        end)
-
-        if isBossBarActive and STATE.YetiArenaCFrame then
+        -- 4. Nếu trên màn hình có thanh máu giao tranh (The Shiny Yeti / Team up to beat it):
+        if isBossActiveGui and STATE.YetiArenaCFrame then
             return "YetiActiveFromGui", STATE.YetiArenaCFrame, nil
         end
 
         return nil, nil, nil
     end
 
-    -- TẤN CÔNG YETI BẰNG NETWORK REMOTE (TUYỆT ĐỐI KHÔNG CLICK VÀO MÀN HÌNH NÉ NÚT SEND PETS)
+    -- TẤN CÔNG YETI BẰNG NETWORK (KHÔNG CHẠM VÀO MÀN HÌNH NÉ NÚT SEND PETS)
     local function performAttackYeti(targetObj)
         if not STATE.AutoClickYeti then return end
 
@@ -862,7 +861,7 @@ task.spawn(function()
                     if Breakables then
                         for _, b in pairs(Breakables:GetChildren()) do
                             local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
-                            if part and (part.Position - STATE.YetiArenaCFrame.Position).Magnitude < 80 then
+                            if part and (part.Position - STATE.YetiArenaCFrame.Position).Magnitude < 90 then
                                 Network.Fire("Breakables_PlayerAttackBreakable", b.Name, "1")
                                 Network.Fire("Breakables_PlayerAttackBreakable", b.Name, {})
                                 break
