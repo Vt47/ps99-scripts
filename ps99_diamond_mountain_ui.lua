@@ -339,6 +339,72 @@ local function getCaveChest(caveNum)
     return nil, nil
 end
 
+-- Hàm lấy CFrame chuẩn xác của Trứng (tránh lấy nhầm Part của EggLock/PriceHUD/bị văng lên trời)
+local function getEggCFrame(eggObj, caveNum)
+    if not eggObj then return nil end
+    local candidateCF = nil
+
+    -- 1. Ưu tiên đối tượng Center (Tâm bệ trứng)
+    local center = eggObj:FindFirstChild("Center")
+    if center then
+        if center:IsA("BasePart") then
+            candidateCF = center.CFrame
+        elseif center:IsA("Attachment") then
+            candidateCF = center.WorldCFrame
+        end
+    end
+
+    -- 2. Kiểm tra Model con Egg
+    if not candidateCF then
+        local eggSub = eggObj:FindFirstChild("Egg")
+        if eggSub then
+            if eggSub:IsA("BasePart") then
+                candidateCF = eggSub.CFrame
+            elseif eggSub:IsA("Model") then
+                local p = eggSub.PrimaryPart or eggSub:FindFirstChildWhichIsA("BasePart", true)
+                if p then candidateCF = p.CFrame end
+            end
+        end
+    end
+
+    -- 3. Kiểm tra các BasePart con trực tiếp (LOẠI BỎ hoàn toàn EggLock, PriceHUD, PriceFrame)
+    if not candidateCF then
+        for _, ch in pairs(eggObj:GetChildren()) do
+            if ch.Name ~= "EggLock" and ch.Name ~= "PriceHUD" and ch.Name ~= "PriceFrame" and ch:IsA("BasePart") then
+                candidateCF = ch.CFrame
+                break
+            end
+        end
+    end
+
+    -- 4. Sử dụng GetPivot() của Model nếu có
+    if not candidateCF and eggObj:IsA("Model") then
+        local pivot = eggObj:GetPivot()
+        if pivot and pivot.Position.Magnitude > 10 then
+            candidateCF = pivot
+        end
+    end
+
+    -- 5. KIỂM TRA TỌA ĐỘ AN TOÀN (SANITY CHECK): Trứng bắt buộc phải nằm trong hang núi
+    local refCF = STATE.CaveCFrames[caveNum]
+    if not refCF then
+        local _, chestCF = getCaveChest(caveNum)
+        if chestCF then refCF = chestCF end
+    end
+
+    if refCF and candidateCF then
+        local dist = (candidateCF.Position - refCF.Position).Magnitude
+        -- Nếu tọa độ quả trứng bị lệch xa hơn 60 studs hoặc bay lên trời/rớt xuống vực -> Glitched
+        if dist > 60 or math.abs(candidateCF.Position.Y - refCF.Position.Y) > 25 then
+            return refCF
+        end
+    elseif not candidateCF and refCF then
+        return refCF
+    end
+
+    return candidateCF
+end
+
 -- Tìm CFrame và đối tượng Trứng của Hang đang chọn (Trail 1-6)
 local function getCaveEgg(caveNum)
     caveNum = caveNum or STATE.SelectedCave
@@ -350,11 +416,11 @@ local function getCaveEgg(caveNum)
         for _, egg in pairs(CustomEggs:GetChildren()) do
             local trailNum = egg:GetAttribute("DM_TrailEgg")
             if trailNum and tonumber(trailNum) == tonumber(caveNum) then
-                local part = getPartFromInstance(egg)
+                local eggCF = getEggCFrame(egg, caveNum)
                 local eggId = egg:GetAttribute("DM_EggId")
                 if not eggId or eggId == "" then eggId = egg.Name end
-                if part then
-                    return egg, part.CFrame, eggId
+                if eggCF then
+                    return egg, eggCF, eggId
                 end
             end
         end
@@ -363,10 +429,10 @@ local function getCaveEgg(caveNum)
         for _, egg in pairs(CustomEggs:GetChildren()) do
             local eName = string.lower(egg.Name)
             if string.find(eName, "trail" .. tostring(caveNum)) or string.find(eName, "cave" .. tostring(caveNum)) then
-                local part = getPartFromInstance(egg)
+                local eggCF = getEggCFrame(egg, caveNum)
                 local eggId = egg:GetAttribute("DM_EggId") or egg.Name
-                if part then
-                    return egg, part.CFrame, eggId
+                if eggCF then
+                    return egg, eggCF, eggId
                 end
             end
         end
@@ -377,13 +443,19 @@ local function getCaveEgg(caveNum)
         for _, egg in pairs(Eggs:GetChildren()) do
             local trailNum = egg:GetAttribute("DM_TrailEgg")
             if trailNum and tonumber(trailNum) == tonumber(caveNum) then
-                local part = getPartFromInstance(egg)
+                local eggCF = getEggCFrame(egg, caveNum)
                 local eggId = egg:GetAttribute("DM_EggId") or egg.Name
-                if part then
-                    return egg, part.CFrame, eggId
+                if eggCF then
+                    return egg, eggCF, eggId
                 end
             end
         end
+    end
+
+    -- Nếu không tìm thấy model trứng nhưng đã có tọa độ hang/rương -> Sử dụng tọa độ hang an toàn
+    local refCF = STATE.CaveCFrames[caveNum]
+    if refCF then
+        return nil, refCF, STATE.SelectedEggName ~= "" and STATE.SelectedEggName or "Trail Egg"
     end
 
     return nil, nil, nil
@@ -1495,6 +1567,7 @@ task.spawn(function()
     end
 
     -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG (NON-DESTRUCTIVE)
+    -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG (NON-DESTRUCTIVE)
     local function handleEggOpeningVisuals()
         pcall(function()
             if STATE.SkipAnimation then
@@ -1511,17 +1584,21 @@ task.spawn(function()
                 end
             end
 
-            -- Tự động đóng pop-up OK / Continue / Dismiss kết quả mở trứng
+            -- Tự động đóng pop-up OK / Continue / Dismiss / Something went wrong
             task.spawn(function()
-                task.wait(0.3)
+                task.wait(0.15)
                 for _, btn in pairs(Player.PlayerGui:GetDescendants()) do
                     if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
                         local bName = string.lower(btn.Name)
                         local bText = btn:IsA("TextButton") and string.lower(btn.Text) or ""
-                        if bText == "ok" or bText == "continue" or bName == "ok" or bName == "close" or bName == "dismiss" or bName == "next" then
+                        if bText == "ok" or bText == "ok!" or string.find(bText, "ok") or bText == "continue" or bName == "ok" or bName == "close" or bName == "dismiss" or bName == "next" then
                             pcall(function()
-                                if btn.MouseButton1Click then btn.MouseButton1Click:Fire() end
-                                if btn.Activated then btn.Activated:Fire() end
+                                if firesignal then
+                                    firesignal(btn.Activated)
+                                    firesignal(btn.MouseButton1Click)
+                                elseif btn.MouseButton1Click then
+                                    btn.MouseButton1Click:Fire()
+                                end
                             end)
                         end
                     end
@@ -1530,66 +1607,21 @@ task.spawn(function()
         end)
     end
 
-    -- HÀM MỞ TRỨNG TỔNG HỢP (MULTI-ENGINE EGG HATCHER - HOÀN TOÀN KHÔNG YIELD/TREO THREAD)
+    -- HÀM MỞ TRỨNG TỔNG HỢP AN TOÀN (SAFE EGG HATCHER - TUYỆT ĐỐI KHÔNG CLICK NÚT MUA ROBUX / KHÔNG SPAM REMOTE LẠ)
     local function attemptHatchEgg(eggObj, eggId, amt)
         if not eggId and not eggObj then return false end
         amt = amt or 1
         local hatched = false
 
-        -- ENGINE 1: MODULE NỘI BỘ CHÍNH XÁC CỦA GAME (EggCmds.RequestPurchase)
-        if EggCmds and EggCmds.RequestPurchase then
+        -- 1. ƯU TIÊN SỐ 1: HÀM MỞ TRỨNG NỘI BỘ CHUẨN CỦA GAME (EggCmds.RequestPurchase)
+        if EggCmds and EggCmds.RequestPurchase and eggId and eggId ~= "" then
             pcall(function()
                 EggCmds.RequestPurchase(eggId, amt)
                 hatched = true
             end)
-            if not hatched and eggObj and eggObj.Name ~= eggId then
-                pcall(function()
-                    EggCmds.RequestPurchase(eggObj.Name, amt)
-                    hatched = true
-                end)
-            end
-            if not hatched then
-                pcall(function()
-                    EggCmds.RequestPurchase(eggId, amt, false, false)
-                    hatched = true
-                end)
-            end
         end
 
-        -- ENGINE 2: EVENT NỘI BỘ QUA NETWORK.FIRE (FIRE & FORGET, KHÔNG TREO THREAD)
-        if Network and Network.Fire then
-            local candidateEvents = {
-                "Eggs_RequestPurchase",
-                "CustomEggs_RequestPurchase",
-                "CustomEggs_Purchase",
-                "CustomEggs_Hatch",
-                "Eggs_Hatch",
-                "Eggs_Purchase"
-            }
-            for _, rName in ipairs(candidateEvents) do
-                pcall(function()
-                    Network.Fire(rName, eggId, amt)
-                end)
-                if eggObj and eggObj.Name ~= eggId then
-                    pcall(function()
-                        Network.Fire(rName, eggObj.Name, amt)
-                    end)
-                end
-            end
-        end
-
-        -- ENGINE 3: NHẤN PHÍM TƯƠNG TÁC 'E' (VIRTUALINPUTMANAGER)
-        pcall(function()
-            local VIM = game:GetService("VirtualInputManager")
-            if VIM then
-                VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.04)
-                VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                hatched = true
-            end
-        end)
-
-        -- ENGINE 4: KÍCH HOẠT PROXIMITYPROMPT NẾU CÓ
+        -- 2. TƯƠNG TÁC PROXIMITYPROMPT TRỰC TIẾP TRÊN TRỨNG
         if eggObj then
             for _, pp in pairs(eggObj:GetDescendants()) do
                 if pp:IsA("ProximityPrompt") and pp.Enabled then
@@ -1603,25 +1635,14 @@ task.spawn(function()
             end
         end
 
-        -- ENGINE 5: KÍCH HOẠT NÚT BẤM GUI MỞ TRỨNG TRÊN MÀN HÌNH (SỬ DỤNG FIRESIGNAL / CONNECTIONS CHUẨN)
+        -- 3. NHẤN PHÍM TƯƠNG TÁC 'E' (VIRTUALINPUTMANAGER)
         pcall(function()
-            for _, g in pairs(Player.PlayerGui:GetDescendants()) do
-                if (g:IsA("TextButton") or g:IsA("ImageButton")) and g.Visible then
-                    local bName = string.lower(g.Name)
-                    local bText = g:IsA("TextButton") and string.lower(g.Text) or ""
-                    if bName == "1egg" or bName == "3egg" or bName == "autohatch" or bName == "hatch" or bName == "buy"
-                       or bText == "1 egg" or bText == "3 eggs" or bText == "auto hatch" or bText == "buy" or bText == "e" then
-                        if firesignal then
-                            firesignal(g.Activated)
-                            firesignal(g.MouseButton1Click)
-                            hatched = true
-                        elseif getconnections then
-                            for _, c in pairs(getconnections(g.Activated)) do c:Fire() end
-                            for _, c in pairs(getconnections(g.MouseButton1Click)) do c:Fire() end
-                            hatched = true
-                        end
-                    end
-                end
+            local VIM = game:GetService("VirtualInputManager")
+            if VIM then
+                VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                task.wait(0.04)
+                VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                hatched = true
             end
         end)
 
@@ -1700,8 +1721,8 @@ task.spawn(function()
                         -- Đang trong phiên mở trứng: giữ nhân vật đứng cố định trên bệ trứng trong hang
                         if eggCF then
                             local dist = (eggCF.Position - hrp.Position).Magnitude
-                            if dist > 3.5 then
-                                local standPos = eggCF.Position + Vector3.new(0, 1.2, 0)
+                            if dist > 8 then
+                                local standPos = eggCF.Position + Vector3.new(0, 0.5, 0)
                                 safeTeleportTo(standPos, eggCF.Position)
                                 task.wait(0.15)
                             end
@@ -1778,10 +1799,13 @@ task.spawn(function()
                                 STATE.CaveHatchEggObj = eggObj
                                 STATE.CaveHatchEggCF = eggCF
 
-                                local standPos = eggCF.Position + Vector3.new(0, 1.2, 0)
-                                safeTeleportTo(standPos, eggCF.Position)
+                                local dist = (eggCF.Position - hrp.Position).Magnitude
+                                if dist > 8 then
+                                    local standPos = eggCF.Position + Vector3.new(0, 0.5, 0)
+                                    safeTeleportTo(standPos, eggCF.Position)
+                                    task.wait(0.2)
+                                end
                                 STATE.CurrentAction = "🎉 Rương đã vỡ! Đã khóa vị trí mở trứng " .. eggId .. " trong 5 phút"
-                                task.wait(0.2)
                             else
                                 STATE.CurrentAction = "⏳ Chờ Trứng Hang " .. STATE.SelectedCave .. " xuất hiện..."
                             end
