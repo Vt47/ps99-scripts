@@ -1,14 +1,14 @@
 --========================================================================
 -- PS99 DIAMOND MOUNTAIN - SUMMIT AFK & YETI BOSS SUITE (DELTA EXECUTOR)
--- Phiên bản V4: Sửa triệt để lỗi trạng thái Yeti hiển thị sai khi đang Cooldown,
--- lọc sạch bảng Leaderboard / Pet người chơi, tự động lấy đồng hồ đếm ngược Cooldown.
+-- Phiên bản V5: Sửa triệt để lỗi click vào nút "Send Pets", nhận diện chính xác
+-- "The Yeti returns in X:XX", loại bỏ hoàn toàn VirtualClick trên màn hình cảm ứng.
 --========================================================================
 
--- 1. DIỆT BẢN CHẠY CŨ KHI BẤM EXCUTE LẠI (KILL PREVIOUS RUNNING INSTANCE)
-if _G.PS99_SUMMIT_RUNNING then
-    _G.PS99_SUMMIT_RUNNING = false
-    task.wait(0.3)
-end
+-- 1. DIỆT SẠCH MỌI PHIÊN BẢN CŨ TRONG BỘ NHỚ
+local CURRENT_SESSION_ID = tick()
+_G.PS99_SUMMIT_SESSION = CURRENT_SESSION_ID
+_G.PS99_SUMMIT_RUNNING = false
+task.wait(0.3)
 _G.PS99_SUMMIT_RUNNING = true
 
 if not game:IsLoaded() then
@@ -21,7 +21,6 @@ local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
 local VirtualUser = game:GetService("VirtualUser")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 local RS = game:GetService("ReplicatedStorage")
@@ -32,13 +31,13 @@ local Camera = workspace.CurrentCamera
 
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "💎 PS99 Summit Suite V4",
-        Text = "Đang khởi tạo phiên bản mới...",
+        Title = "💎 PS99 Summit Suite V5",
+        Text = "Đã sửa lỗi Send Pets & Cooldown Yeti!",
         Duration = 3
     })
 end)
 
--- Tìm nơi chứa GUI cho Delta Executor (gethui > CoreGui > PlayerGui)
+-- Tìm nơi chứa GUI cho Delta Executor
 local function getSafeGuiParent()
     if typeof(gethui) == "function" then
         local h = gethui()
@@ -58,7 +57,7 @@ end
 
 local GuiParent = getSafeGuiParent()
 
--- Dọn dẹp tất cả UI cũ nếu có
+-- Dọn dẹp UI cũ
 pcall(function()
     local containers = {}
     if typeof(gethui) == "function" then table.insert(containers, gethui()) end
@@ -97,8 +96,8 @@ local STATE = {
     SelectedCave = 1,
     AutoCaveChests = false,
     AutoHatch = false,
-    ShowHatchPopup = true,       -- Hiện pop-up kết quả đã mở được bao nhiêu trứng
-    SkipAnimation = true,        -- Bỏ qua hoạt ảnh cắt cảnh
+    ShowHatchPopup = true,
+    SkipAnimation = true,
     SelectedEggName = "Nearest",
     HatchAmount = 1,
 
@@ -244,7 +243,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -60, 1, 0)
 TitleLabel.Position = UDim2.new(0, 12, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "💎 PS99 SUMMIT SUITE V4 | YETI & FARM"
+TitleLabel.Text = "💎 PS99 SUMMIT SUITE V5 | YETI & FARM"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 13
@@ -469,7 +468,7 @@ local lblPets = createInfoCard(DashboardPage, "🐾 Huge / Titanic:", "0 / 0")
 
 -- TRANG 2: YETI BOSS
 createToggle(YetiPage, "👹 Auto Tele & Đánh Yeti Khi Hồi Sinh", STATE.AutoYeti, function(v) STATE.AutoYeti = v end)
-createToggle(YetiPage, "⚔️ Auto Click & Xuất Pet Vào Yeti", STATE.AutoClickYeti, function(v) STATE.AutoClickYeti = v end)
+createToggle(YetiPage, "⚔️ Tự Động Xuất Pet Đánh Yeti", STATE.AutoClickYeti, function(v) STATE.AutoClickYeti = v end)
 createToggle(YetiPage, "🔔 Báo Webhook Khi Hạ Gục Yeti", STATE.YetiCooldownAlert, function(v) STATE.YetiCooldownAlert = v end)
 
 createActionButton(YetiPage, "📍 Lưu Vị Trí Đấu Trường Yeti (Đứng Tại Bãi Boss)", Color3.fromRGB(40, 140, 90), function()
@@ -498,6 +497,10 @@ end)
 createActionButton(YetiPage, "🔄 Đặt Lại Bộ Đếm Yeti (Reset Count)", Color3.fromRGB(180, 80, 50), function()
     STATE.YetiKilledCount = 0
     lblYetiCount.Text = "0 con"
+end)
+
+createActionButton(YetiPage, "🔄 Reconnect Server (Xóa Sạch Lỗi Click Bản Cũ)", Color3.fromRGB(200, 60, 60), function()
+    TeleportService:Teleport(game.PlaceId, Player)
 end)
 
 -- TRANG 3: HANG NÚI & TRỨNG
@@ -753,19 +756,20 @@ task.spawn(function()
 
     -- BỘ QUÉT TÌM YETI CHÍNH XÁC (KHÔNG BỊ BẮT NHẦM COOLDOWN / LEADERBOARD)
     local function checkYetiBoss()
-        -- 1. Kiểm tra Cooldown trong PlayerGui
+        -- 1. Kiểm tra chính xác dòng thông báo Cooldown trên màn hình
         local isCooldown, cdString = false, nil
-        for _, g in pairs(Player.PlayerGui:GetDescendants()) do
-            if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
-                local t = string.lower(g.Text)
-                if (string.find(t, "yeti") or string.find(t, "abominable")) and 
-                   (string.find(t, "cooldown") or string.find(t, "respawn") or string.find(t, "next") or string.find(t, "starts in") or string.find(t, "start in") or string.find(t, "ends in")) then
-                    isCooldown = true
-                    cdString = string.match(g.Text, "%d+:%d+") or g.Text
-                    break
+        pcall(function()
+            for _, g in pairs(Player.PlayerGui:GetDescendants()) do
+                if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
+                    local t = string.lower(g.Text)
+                    if string.find(t, "returns in") or string.find(t, "again in") or string.find(t, "cooldown") or string.find(t, "respawn") or string.find(t, "starts in") then
+                        isCooldown = true
+                        cdString = string.match(g.Text, "%d+:%d+") or g.Text
+                        break
+                    end
                 end
             end
-        end
+        end)
 
         if isCooldown then
             return nil, nil, cdString
@@ -816,59 +820,63 @@ task.spawn(function()
         end
 
         -- 4. Kiểm tra Boss Health Bar thực tế (Có thanh máu và KHÔNG PHẢI cooldown)
-        for _, g in pairs(Player.PlayerGui:GetDescendants()) do
-            if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
-                local t = string.lower(g.Text)
-                if (string.find(t, "yeti") or string.find(t, "abominable"))
-                   and not string.find(t, "cooldown")
-                   and not string.find(t, "next")
-                   and not string.find(t, "respawn")
-                   and not string.find(t, "leaderboard")
-                   and not string.find(t, "board") then
-                    if STATE.YetiArenaCFrame then
-                        return "YetiActiveFromGui", STATE.YetiArenaCFrame, nil
+        local isBossBarActive = false
+        pcall(function()
+            for _, g in pairs(Player.PlayerGui:GetDescendants()) do
+                if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
+                    local t = string.lower(g.Text)
+                    if (string.find(t, "the yeti") or string.find(t, "abominable yeti"))
+                       and not string.find(t, "returns in")
+                       and not string.find(t, "again in")
+                       and not string.find(t, "cooldown")
+                       and not string.find(t, "next")
+                       and not string.find(t, "respawn")
+                       and not string.find(t, "leaderboard")
+                       and not string.find(t, "board") then
+                        isBossBarActive = true
+                        break
                     end
                 end
             end
+        end)
+
+        if isBossBarActive and STATE.YetiArenaCFrame then
+            return "YetiActiveFromGui", STATE.YetiArenaCFrame, nil
         end
 
         return nil, nil, nil
     end
 
-    local function performAttackYeti(targetObj, targetCFrame)
+    -- TẤN CÔNG YETI BẰNG NETWORK REMOTE (TUYỆT ĐỐI KHÔNG CLICK VÀO MÀN HÌNH NÉ NÚT SEND PETS)
+    local function performAttackYeti(targetObj)
+        if not STATE.AutoClickYeti then return end
+
         if Network and Network.Fire then
             pcall(function()
                 if typeof(targetObj) == "Instance" then
                     Network.Fire("Breakables_PlayerAttackBreakable", targetObj.Name, "1")
                     Network.Fire("Breakables_PlayerAttackBreakable", targetObj.Name, {})
+                elseif STATE.YetiArenaCFrame then
+                    local Things = workspace:FindFirstChild("__THINGS")
+                    local Breakables = Things and Things:FindFirstChild("Breakables")
+                    if Breakables then
+                        for _, b in pairs(Breakables:GetChildren()) do
+                            local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
+                            if part and (part.Position - STATE.YetiArenaCFrame.Position).Magnitude < 80 then
+                                Network.Fire("Breakables_PlayerAttackBreakable", b.Name, "1")
+                                Network.Fire("Breakables_PlayerAttackBreakable", b.Name, {})
+                                break
+                            end
+                        end
+                    end
                 end
             end)
         end
-
-        pcall(function()
-            if targetCFrame and Camera then
-                Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetCFrame.Position)
-            end
-        end)
-
-        pcall(function()
-            local vp = Camera.ViewportSize
-            local center = Vector2.new(vp.X / 2, vp.Y / 2)
-            if VirtualUser then
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton1(center)
-            end
-            if VirtualInputManager then
-                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
-                task.wait(0.02)
-                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
-            end
-        end)
     end
 
     -- VÒNG LẶP SĂN YETI
     task.spawn(function()
-        while _G.PS99_SUMMIT_RUNNING do
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(0.4)
             if STATE.AutoYeti then
                 local yetiObj, yetiPos, cdTimer = checkYetiBoss()
@@ -885,7 +893,7 @@ task.spawn(function()
                     end
 
                     if STATE.AutoClickYeti then
-                        performAttackYeti(yetiObj, yetiPos)
+                        performAttackYeti(yetiObj)
                     end
                 else
                     if cdTimer then
@@ -931,6 +939,8 @@ task.spawn(function()
                         end
                     end
                 end
+            else
+                STATE.IsFightingYeti = false
             end
         end
     end)
@@ -1000,12 +1010,6 @@ task.spawn(function()
                         end
                     end
                 end
-
-                local vp = Camera.ViewportSize
-                if VirtualUser then
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton1(Vector2.new(vp.X / 2, vp.Y / 2))
-                end
             else
                 local eggOpening = Player.PlayerGui:FindFirstChild("EggOpening")
                 if eggOpening then
@@ -1025,7 +1029,7 @@ task.spawn(function()
 
     -- VÒNG LẶP AUTO HATCH TRỨNG LIÊN TỤC
     task.spawn(function()
-        while _G.PS99_SUMMIT_RUNNING do
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(0.3)
             if STATE.AutoHatch and not STATE.IsFightingYeti then
                 local realEgg = getRealEggName()
@@ -1045,7 +1049,7 @@ task.spawn(function()
 
     -- VÒNG LẶP PHÁ RƯƠNG TRONG HANG
     task.spawn(function()
-        while _G.PS99_SUMMIT_RUNNING do
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(0.4)
             if STATE.AutoCaveChests and not STATE.IsFightingYeti then
                 pcall(function()
@@ -1070,6 +1074,7 @@ task.spawn(function()
                         end
                         if nearest and Network and Network.Fire then
                             Network.Fire("Breakables_PlayerAttackBreakable", nearest.Name, "1")
+                            Network.Fire("Breakables_PlayerAttackBreakable", nearest.Name, {})
                         end
                     end
                 end)
@@ -1079,7 +1084,7 @@ task.spawn(function()
 
     -- VÒNG LẶP FARM TIỀN
     task.spawn(function()
-        while _G.PS99_SUMMIT_RUNNING do
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(0.4)
             if STATE.AutoFarmMoney and not STATE.AutoHatch and not STATE.IsFightingYeti then
                 pcall(function()
@@ -1101,6 +1106,7 @@ task.spawn(function()
                         end
                         if nearest and Network and Network.Fire then
                             Network.Fire("Breakables_PlayerAttackBreakable", nearest.Name, "1")
+                            Network.Fire("Breakables_PlayerAttackBreakable", nearest.Name, {})
                         end
                     end
                 end)
@@ -1110,7 +1116,7 @@ task.spawn(function()
 
     -- HÚT ORBS & LOOTBAGS
     task.spawn(function()
-        while _G.PS99_SUMMIT_RUNNING do
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(0.4)
             if STATE.AutoCollectDrops then
                 pcall(function()
@@ -1160,7 +1166,7 @@ task.spawn(function()
 
     -- CẬP NHẬT DASHBOARD
     task.spawn(function()
-        while _G.PS99_SUMMIT_RUNNING do
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(1)
             pcall(function()
                 lblAction.Text = STATE.CurrentAction
