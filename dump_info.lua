@@ -1,7 +1,7 @@
 --========================================================================
 -- PS99 COMPACT CAVE & EGG DIAGNOSTIC TOOL
 -- Quét nhanh trạng thái 6 Hang, Trứng, Cooldown & Remotes
--- Output siêu gọn gàng (~25-30 dòng) để dán dễ dàng vào khung chat
+-- Hỗ trợ gửi Discord Webhook siêu tương thích & tự động copy Clipboard
 --========================================================================
 
 local HttpService = game:GetService("HttpService")
@@ -11,12 +11,38 @@ local StarterGui = game:GetService("StarterGui")
 local Player = Players.LocalPlayer
 
 local WEBHOOK = "https://discord.com/api/webhooks/1557705516178874429/DSxD6hH0VRjmXxBB44kQVM3VDhNvUwTp7h4uTCCtZK1k4vOLyOxLtjAfwxK2mCSS0MFb"
-local req = request or http_request or (syn and syn.request) or (http and http.request)
 
 local logLines = {}
 local function log(str)
     table.insert(logLines, str)
     print("[PS99 Debug] " .. str)
+end
+
+local function sendWebhook(url, bodyContent)
+    local fn = request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
+    if not fn then
+        warn("[PS99] Executor không hỗ trợ hàm request() trực tiếp.")
+        return false, "No request function"
+    end
+    local payload = {
+        Url = url,
+        url = url,
+        Method = "POST",
+        method = "POST",
+        Headers = {
+            ["Content-Type"] = "application/json",
+            ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        },
+        headers = {
+            ["Content-Type"] = "application/json",
+            ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        },
+        Body = bodyContent,
+        body = bodyContent
+    }
+    return pcall(function()
+        return fn(payload)
+    end)
 end
 
 log("=== BÁO CÁO NHANH PS99 (CẬP NHẬT TRẠNG THÁI HANG & TRỨNG) ===")
@@ -117,24 +143,25 @@ if setclipboard then
     log("\n=> ĐÃ COPY TOÀN BỘ VÀO BỘ NHỚ TẠM (CLIPBOARD)!")
 end
 
-pcall(function()
-    StarterGui:SetCore("SendNotification", {
-        Title = "📋 Đã Quét Xong!",
-        Text = "Đã copy vào Clipboard. Log siêu ngắn dễ gửi!",
-        Duration = 5
-    })
-end)
+local jsonBody = HttpService:JSONEncode({
+    username = "PS99 Quick Scanner",
+    content = "📋 **BÁO CÁO NHANH HANG & COOLDOWN TỪ GAME**\n```yaml\n" .. fullLog .. "\n```"
+})
 
-if req and WEBHOOK and WEBHOOK ~= "" then
-    pcall(function()
-        req({
-            Url = WEBHOOK,
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode({
-                username = "PS99 Quick Scanner",
-                content = "```yaml\n" .. fullLog .. "\n```"
-            })
+local sentOk, sentResult = sendWebhook(WEBHOOK, jsonBody)
+
+pcall(function()
+    if sentOk then
+        StarterGui:SetCore("SendNotification", {
+            Title = "✅ Đã Gửi Discord!",
+            Text = "Đã gửi log thành công vào Discord của bạn!",
+            Duration = 5
         })
-    end)
-end
+    else
+        StarterGui:SetCore("SendNotification", {
+            Title = "📋 Đã Copy Clipboard!",
+            Text = "Đã copy log (~25 dòng). Bạn chỉ cần dán vào chat!",
+            Duration = 5
+        })
+    end
+end)

@@ -968,10 +968,10 @@ end)
 --========================================================================
 
 task.spawn(function()
-    local req = request or http_request or (syn and syn.request) or (http and http.request)
-
     local function sendWebhook(title, description, color, mention)
-        if not req or not STATE.Webhook or STATE.Webhook == "" then return end
+        if not STATE.Webhook or STATE.Webhook == "" then return end
+        local fn = request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
+        if not fn then return end
         pcall(function()
             local embed = {
                 description = description,
@@ -980,15 +980,26 @@ task.spawn(function()
                 timestamp = DateTime.now():ToIsoDate()
             }
             if title and title ~= "" then embed.title = title end
-            req({
+            local jsonBody = HttpService:JSONEncode({
+                username = "Diamond Mountain Monitor",
+                content = mention or "",
+                embeds = { embed }
+            })
+            fn({
                 Url = STATE.Webhook,
+                url = STATE.Webhook,
                 Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode({
-                    username = "Diamond Mountain Monitor",
-                    content = mention or "",
-                    embeds = { embed }
-                })
+                method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json",
+                    ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+                },
+                headers = {
+                    ["Content-Type"] = "application/json",
+                    ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+                },
+                Body = jsonBody,
+                body = jsonBody
             })
         end)
     end
