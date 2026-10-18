@@ -1332,83 +1332,34 @@ task.spawn(function()
         end)
     end
 
-    -- HÀM MỞ TRỨNG TỔNG HỢP (MULTI-ENGINE EGG HATCHER)
+    -- HÀM MỞ TRỨNG TỔNG HỢP (MULTI-ENGINE EGG HATCHER - HOÀN TOÀN KHÔNG YIELD/TREO THREAD)
     local function attemptHatchEgg(eggObj, eggId, amt)
         if not eggId and not eggObj then return false end
         amt = amt or 1
         local hatched = false
 
-        -- ENGINE 1: MODULE NỘI BỘ GAME (Library.Client.EggCmds)
-        if EggCmds then
+        -- ENGINE 1: MODULE NỘI BỘ CHÍNH XÁC CỦA GAME (EggCmds.RequestPurchase)
+        if EggCmds and EggCmds.RequestPurchase then
             pcall(function()
-                if EggCmds.Purchase then
-                    EggCmds.Purchase(eggId, amt)
-                    hatched = true
-                elseif EggCmds.Open then
-                    EggCmds.Open(eggId, amt)
-                    hatched = true
-                elseif EggCmds.RequestPurchase then
-                    EggCmds.RequestPurchase(eggId, amt)
-                    hatched = true
-                elseif EggCmds.Hatch then
-                    EggCmds.Hatch(eggId, amt)
-                    hatched = true
-                end
+                EggCmds.RequestPurchase(eggId, amt)
+                hatched = true
             end)
             if not hatched and eggObj and eggObj.Name ~= eggId then
                 pcall(function()
-                    if EggCmds.Purchase then
-                        EggCmds.Purchase(eggObj.Name, amt)
-                        hatched = true
-                    elseif EggCmds.Open then
-                        EggCmds.Open(eggObj.Name, amt)
-                        hatched = true
-                    end
+                    EggCmds.RequestPurchase(eggObj.Name, amt)
+                    hatched = true
+                end)
+            end
+            if not hatched then
+                pcall(function()
+                    EggCmds.RequestPurchase(eggId, amt, false, false)
+                    hatched = true
                 end)
             end
         end
 
-        -- ENGINE 2: TẤT CẢ CANDIDATE REMOTES QUA NETWORK.INVOKE
-        if not hatched and Network and Network.Invoke then
-            local candidateFuncs = {
-                "Eggs_RequestPurchase",
-                "CustomEggs_RequestPurchase",
-                "CustomEggs_Purchase",
-                "CustomEggs_Hatch",
-                "Eggs_Hatch",
-                "Eggs_Purchase",
-                "TrailEggs_RequestPurchase",
-                "TrailEgg_RequestPurchase",
-                "Trail_RequestPurchase"
-            }
-            for _, rName in ipairs(candidateFuncs) do
-                -- Thử với eggId
-                pcall(function()
-                    local r = Network.Invoke(rName, eggId, amt)
-                    if r ~= nil and r ~= false then hatched = true end
-                end)
-                if hatched then break end
-
-                -- Thử 3 tham số (golden/charged flag)
-                pcall(function()
-                    local r = Network.Invoke(rName, eggId, amt, false)
-                    if r ~= nil and r ~= false then hatched = true end
-                end)
-                if hatched then break end
-
-                -- Thử với UID eggObj.Name
-                if eggObj and eggObj.Name ~= eggId then
-                    pcall(function()
-                        local r = Network.Invoke(rName, eggObj.Name, amt)
-                        if r ~= nil and r ~= false then hatched = true end
-                    end)
-                    if hatched then break end
-                end
-            end
-        end
-
-        -- ENGINE 3: TẤT CẢ CANDIDATE REMOTES QUA NETWORK.FIRE
-        if not hatched and Network and Network.Fire then
+        -- ENGINE 2: EVENT NỘI BỘ QUA NETWORK.FIRE (FIRE & FORGET, KHÔNG TREO THREAD)
+        if Network and Network.Fire then
             local candidateEvents = {
                 "Eggs_RequestPurchase",
                 "CustomEggs_RequestPurchase",
@@ -1429,23 +1380,18 @@ task.spawn(function()
             end
         end
 
-        -- ENGINE 4: KÍCH HOẠT NÚT BẤM GUI MỞ TRỨNG TRÊN MÀN HÌNH
+        -- ENGINE 3: NHẤN PHÍM TƯƠNG TÁC 'E' (VIRTUALINPUTMANAGER)
         pcall(function()
-            for _, g in pairs(Player.PlayerGui:GetDescendants()) do
-                if (g:IsA("TextButton") or g:IsA("ImageButton")) and g.Visible then
-                    local bName = string.lower(g.Name)
-                    local bText = g:IsA("TextButton") and string.lower(g.Text) or ""
-                    if bName == "1egg" or bName == "3egg" or bName == "autohatch" or bName == "hatch"
-                       or bText == "1 egg" or bText == "3 eggs" or bText == "auto hatch" or bText == "buy" then
-                        if g.MouseButton1Click then g.MouseButton1Click:Fire() end
-                        if g.Activated then g.Activated:Fire() end
-                        hatched = true
-                    end
-                end
+            local VIM = game:GetService("VirtualInputManager")
+            if VIM then
+                VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                task.wait(0.04)
+                VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                hatched = true
             end
         end)
 
-        -- ENGINE 5: KÍCH HOẠT PROXIMITYPROMPT NẾU CÓ
+        -- ENGINE 4: KÍCH HOẠT PROXIMITYPROMPT NẾU CÓ
         if eggObj then
             for _, pp in pairs(eggObj:GetDescendants()) do
                 if pp:IsA("ProximityPrompt") and pp.Enabled then
@@ -1458,6 +1404,28 @@ task.spawn(function()
                 end
             end
         end
+
+        -- ENGINE 5: KÍCH HOẠT NÚT BẤM GUI MỞ TRỨNG TRÊN MÀN HÌNH (SỬ DỤNG FIRESIGNAL / CONNECTIONS CHUẨN)
+        pcall(function()
+            for _, g in pairs(Player.PlayerGui:GetDescendants()) do
+                if (g:IsA("TextButton") or g:IsA("ImageButton")) and g.Visible then
+                    local bName = string.lower(g.Name)
+                    local bText = g:IsA("TextButton") and string.lower(g.Text) or ""
+                    if bName == "1egg" or bName == "3egg" or bName == "autohatch" or bName == "hatch" or bName == "buy"
+                       or bText == "1 egg" or bText == "3 eggs" or bText == "auto hatch" or bText == "buy" or bText == "e" then
+                        if firesignal then
+                            firesignal(g.Activated)
+                            firesignal(g.MouseButton1Click)
+                            hatched = true
+                        elseif getconnections then
+                            for _, c in pairs(getconnections(g.Activated)) do c:Fire() end
+                            for _, c in pairs(getconnections(g.MouseButton1Click)) do c:Fire() end
+                            hatched = true
+                        end
+                    end
+                end
+            end
+        end)
 
         return hatched
     end
@@ -1493,8 +1461,8 @@ task.spawn(function()
 
                 -- TRƯỜNG HỢP 1: HANG ĐANG MỞ (CÓ RƯƠNG HOẶC CÓ TRỨNG) VÀ BẬT AUTO HANG/TRỨNG
                 if caveOpen and (STATE.AutoCaveChests or STATE.AutoHatch) then
-                    -- Giai đoạn 1A: Trong hang có Rương cản đường và đang bật Auto Phá Rương
-                    if cavePhase == "chest" and STATE.AutoCaveChests then
+                    -- Giai đoạn 1A: Trong hang có Rương cản đường (phá rương trước thì Trứng mới xuất hiện!)
+                    if cavePhase == "chest" then
                         local chestObj, chestCF = obj1, cf1
                         STATE.CaveCFrames[STATE.SelectedCave] = chestCF
                         
@@ -1505,7 +1473,7 @@ task.spawn(function()
                             task.wait(0.2)
                         end
                         
-                        STATE.CurrentAction = "📦 Đang phá Rương Hang " .. STATE.SelectedCave
+                        STATE.CurrentAction = "📦 Đang phá Rương Hang " .. STATE.SelectedCave .. " để lấy Trứng"
                         if Network and Network.Fire then
                             pcall(function()
                                 Network.Fire("Breakables_PlayerAttackBreakable", chestObj.Name, "1")
@@ -1513,7 +1481,7 @@ task.spawn(function()
                             end)
                         end
 
-                    -- Giai đoạn 1B: Rương đã bị phá vỡ (hoặc tắt phá rương) -> Tiến hành Mở Trứng
+                    -- Giai đoạn 1B: Rương đã bị phá vỡ -> Trứng đã xuất hiện -> Mở Trứng
                     elseif STATE.AutoHatch then
                         local eggObj, eggCF, eggId = nil, nil, nil
                         if cavePhase == "egg" then
