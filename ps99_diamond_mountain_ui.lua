@@ -1240,18 +1240,13 @@ task.spawn(function()
                         task.wait(1.5)
 
                         if STATE.AutoHatch or STATE.AutoCaveChests then
-                            local cavePos = STATE.CaveCFrames[STATE.SelectedCave]
-                            if not cavePos then
-                                local _, ccf = getCaveChest(STATE.SelectedCave)
-                                cavePos = ccf
-                            end
-                            if not cavePos then
-                                local _, ecf = getCaveEgg(STATE.SelectedCave)
-                                cavePos = ecf
-                            end
-                            if cavePos then
-                                safeTeleport(cavePos)
+                            local isOpen, phase, obj, cf = isCaveOpen(STATE.SelectedCave)
+                            if isOpen and cf then
+                                safeTeleport(cf)
                                 STATE.CurrentAction = "🚀 Quay lại Hang " .. STATE.SelectedCave
+                            elseif STATE.FarmCFrame then
+                                safeTeleport(STATE.FarmCFrame)
+                                STATE.CurrentAction = "⏳ Hang " .. STATE.SelectedCave .. " chưa mở / đang cooldown. Về bãi farm tiền..."
                             end
                         elseif STATE.AutoFarmMoney then
                             if STATE.FarmCFrame then

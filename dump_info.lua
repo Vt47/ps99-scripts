@@ -151,7 +151,7 @@ pcall(function()
             for k, _ in pairs(EggCmds) do table.insert(kList, tostring(k)) end
             log("• EggCmds keys: " .. table.concat(kList, ", "))
         else
-            log("• Không tìm thấy Library.Client.EggCmds")
+            log("• Không có Library.Client.EggCmds")
         end
         if Client:FindFirstChild("Network") then
             local Net = require(Client.Network)
@@ -162,42 +162,42 @@ pcall(function()
     end
 end)
 
--- 4. TEST GỌI THỬ MỞ TRỨNG THỰC TẾ TRÊN QUẢ TRỨNG HANG 5
-log("\n[4. TEST GỌI MỞ TRỨNG HANG 5: Frostline Egg]")
+-- 4. KIỂM TRA HÀM MỞ TRỨNG NỘI BỘ (KHÔNG GÂY TREO THREAD)
+log("\n[4. KIỂM TRA HÀM MỞ TRỨNG CLIENT]")
 pcall(function()
     local Lib = RS:FindFirstChild("Library")
     local Client = Lib and Lib:FindFirstChild("Client")
-    local Network = Client and Client:FindFirstChild("Network") and require(Client.Network)
     local EggCmds = Client and Client:FindFirstChild("EggCmds") and require(Client.EggCmds)
-
     if EggCmds then
         for _, fnName in ipairs({"Purchase", "Open", "RequestPurchase", "Hatch"}) do
             if EggCmds[fnName] then
-                local s, r = pcall(function() return EggCmds[fnName]("Frostline Egg", 1) end)
-                log(string.format("• EggCmds.%s: %s, res=%s", fnName, tostring(s), tostring(r)))
+                log("• Có hàm EggCmds." .. fnName)
             end
-        end
-    end
-
-    if Network and Network.Invoke then
-        for _, cName in ipairs({"Eggs_RequestPurchase", "CustomEggs_Purchase", "CustomEggs_RequestPurchase", "buy egg", "Eggs: Request Hatch"}) do
-            local s, r1 = pcall(function() return Network.Invoke(cName, "Frostline Egg", 1) end)
-            log(string.format("• Network.Invoke(\"%s\"): %s, res=%s", cName, tostring(s), tostring(r1)))
         end
     end
 end)
 
 local fullLog = table.concat(logLines, "\n")
 if setclipboard then
-    setclipboard(fullLog)
-    log("\n=> ĐÃ COPY VÀO BỘ NHỚ TẠM!")
+    pcall(function()
+        setclipboard(fullLog)
+        log("\n=> ĐÃ COPY VÀO BỘ NHỚ TẠM!")
+    end)
 end
 
 local sentOk = false
 pcall(function()
     local jsonBody = HttpService:JSONEncode({
         username = "PS99 Quick Scanner",
-        content = "📋 **BÁO CÁO NHANH PS99**\n```yaml\n" .. fullLog .. "\n```"
+        embeds = {
+            {
+                title = "📋 BÁO CÁO NHANH PS99 (HANG & TRỨNG)",
+                description = "```yaml\n" .. fullLog .. "\n```",
+                color = 3447003,
+                footer = { text = "Tài khoản: " .. Player.Name },
+                timestamp = DateTime.now():ToIsoDate()
+            }
+        }
     })
     sentOk = sendWebhook(WEBHOOK, jsonBody)
 end)
