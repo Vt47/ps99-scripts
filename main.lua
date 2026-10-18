@@ -964,53 +964,65 @@ task.spawn(function()
         end
     end)
 
-    -- TÌM TÊN TRỨNG CHÍNH XÁC TRONG HANG
+    -- TÌM TÊN TRỨNG CHÍNH XÁC TRONG HANG (SỬ DỤNG DỮ LIỆU CUSTOMEGGS DM_TRAILEGG)
     local function getRealEggName()
         if STATE.SelectedEggName and STATE.SelectedEggName ~= "Nearest" and STATE.SelectedEggName ~= "" then
             return STATE.SelectedEggName
         end
 
         local Things = workspace:FindFirstChild("__THINGS")
-        local eggContainers = {}
-        if Things then
-            if Things:FindFirstChild("Eggs") then table.insert(eggContainers, Things.Eggs) end
-            if Things:FindFirstChild("CustomEggs") then table.insert(eggContainers, Things.CustomEggs) end
-            if Things:FindFirstChild("EggStands") then table.insert(eggContainers, Things.EggStands) end
-        end
-
+        local CustomEggs = Things and Things:FindFirstChild("CustomEggs")
         local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            local nearest, minDist = nil, 90
-            for _, folder in ipairs(eggContainers) do
-                for _, egg in pairs(folder:GetChildren()) do
-                    local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart", true)))
-                    if part then
-                        local dist = (part.Position - hrp.Position).Magnitude
-                        if dist < minDist then
-                            minDist = dist
-                            nearest = egg
-                        end
+
+        -- 1. ƯU TIÊN 1: Tìm quả trứng thuộc Hang đang chọn (DM_TrailEgg == SelectedCave)
+        if CustomEggs then
+            for _, egg in pairs(CustomEggs:GetChildren()) do
+                local trailNum = egg:GetAttribute("DM_TrailEgg")
+                if trailNum and tonumber(trailNum) == tonumber(STATE.SelectedCave) then
+                    local eggId = egg:GetAttribute("DM_EggId")
+                    if eggId and eggId ~= "" then
+                        return eggId, egg
                     end
                 end
             end
-            if nearest then return nearest.Name end
+        end
 
-            -- Quét các model/part có chữ Egg trong bán kính 90 studs
+        -- 2. ƯU TIÊN 2: Quét quả trứng gần nhất trong CustomEggs
+        if CustomEggs and hrp then
+            local nearest, minDist = nil, 140
+            for _, egg in pairs(CustomEggs:GetChildren()) do
+                local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart", true)))
+                if part then
+                    local dist = (part.Position - hrp.Position).Magnitude
+                    if dist < minDist then
+                        minDist = dist
+                        nearest = egg
+                    end
+                end
+            end
+            if nearest then
+                local eggId = nearest:GetAttribute("DM_EggId")
+                if eggId and eggId ~= "" then return eggId, nearest end
+                return nearest.Name, nearest
+            end
+        end
+
+        -- 3. Quét các model/part có chữ Egg trong bán kính 90 studs
+        if hrp then
             for _, obj in pairs(workspace:GetDescendants()) do
                 if (obj:IsA("Model") or obj:IsA("BasePart")) and string.find(string.lower(obj.Name), "egg") and not string.find(string.lower(obj.Name), "animation") then
                     local part = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)))
-                    if part and hrp then
+                    if part then
                         local dist = (part.Position - hrp.Position).Magnitude
-                        if dist < minDist then
-                            minDist = dist
-                            nearest = obj
+                        if dist < 90 then
+                            return obj.Name, obj
                         end
                     end
                 end
             end
-            if nearest then return nearest.Name end
         end
-        return nil
+
+        return nil, nil
     end
 
     -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG
@@ -1036,10 +1048,16 @@ task.spawn(function()
 
                 task.wait(1.2)
 
+                -- Tự động bấm nút OK / Continue / Close để đóng pop-up kết quả
                 for _, btn in pairs(Player.PlayerGui:GetDescendants()) do
-                    if btn:IsA("TextButton") and (btn.Text == "OK" or btn.Text == "Continue" or btn.Name == "Close" or btn.Name == "Dismiss" or btn.Name == "Next") then
-                        if btn.Visible and btn.Parent and btn.Parent.Visible then
-                            pcall(function() btn.MouseButton1Click:Fire() end)
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                        local bName = string.lower(btn.Name)
+                        local bText = btn:IsA("TextButton") and string.lower(btn.Text) or ""
+                        if bText == "ok" or bText == "continue" or bName == "ok" or bName == "close" or bName == "dismiss" or bName == "next" then
+                            pcall(function()
+                                if btn.MouseButton1Click then btn.MouseButton1Click:Fire() end
+                                if btn.Activated then btn.Activated:Fire() end
+                            end)
                         end
                     end
                 end
@@ -1065,9 +1083,17 @@ task.spawn(function()
         while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(0.3)
             if STATE.AutoHatch and not STATE.IsFightingYeti then
-                local realEgg = getRealEggName()
+                local realEgg, eggObj = getRealEggName()
 
                 if realEgg and realEgg ~= "Nearest" and Network and Network.Invoke then
+                    -- Tự động lưu vị trí hang nếu chưa có
+                    if not STATE.CaveCFrames[STATE.SelectedCave] and eggObj then
+                        local part = eggObj:IsA("BasePart") and eggObj or (eggObj:IsA("Model") and (eggObj.PrimaryPart or eggObj:FindFirstChildWhichIsA("BasePart", true)))
+                        if part then
+                            STATE.CaveCFrames[STATE.SelectedCave] = part.CFrame + Vector3.new(0, 0, 8)
+                        end
+                    end
+
                     pcall(function()
                         Network.Invoke("Eggs_RequestPurchase", realEgg, STATE.HatchAmount or 1)
                     end)
@@ -1083,7 +1109,7 @@ task.spawn(function()
     -- VÒNG LẶP PHÁ RƯƠNG TRONG HANG
     task.spawn(function()
         while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
-            task.wait(0.4)
+            task.wait(0.3)
             if STATE.AutoCaveChests and not STATE.IsFightingYeti then
                 pcall(function()
                     local c = Player.Character
@@ -1091,23 +1117,43 @@ task.spawn(function()
                     local Things = workspace:FindFirstChild("__THINGS")
                     local Breakables = Things and Things:FindFirstChild("Breakables")
                     if h and Breakables then
-                        local nearest, minDist = nil, 90
+                        local targetChest = nil
+                        local targetArea = "Trail" .. tostring(STATE.SelectedCave)
+                        local minDist = 180
+
+                        -- 1. Ưu tiên tìm rương thuộc đúng Hang đang chọn (AreaID = TrailX hoặc BreakableID = DiamondMountainTrailChest)
                         for _, b in pairs(Breakables:GetChildren()) do
-                            local lower = string.lower(b.Name)
-                            if string.find(lower, "chest") or string.find(lower, "crate") then
-                                local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
-                                if part then
-                                    local dist = (part.Position - h.Position).Magnitude
-                                    if dist < minDist then
-                                        minDist = dist
-                                        nearest = b
+                            local areaId = tostring(b:GetAttribute("AreaID") or "")
+                            local bId = tostring(b:GetAttribute("BreakableID") or "")
+                            if (areaId == targetArea or string.lower(areaId) == string.lower(targetArea))
+                               or (bId == "DiamondMountainTrailChest" and (areaId == targetArea or areaId == "")) then
+                                targetChest = b
+                                break
+                            end
+                        end
+
+                        -- 2. Nếu không tìm theo AreaID thì tìm rương Chest gần nhất
+                        if not targetChest then
+                            for _, b in pairs(Breakables:GetChildren()) do
+                                local bClass = tostring(b:GetAttribute("BreakableClass") or "")
+                                local bName = string.lower(b.Name)
+                                local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
+                                if bClass == "Chest" or string.find(bName, "chest") or string.find(bId, "chest") then
+                                    local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
+                                    if part then
+                                        local dist = (part.Position - h.Position).Magnitude
+                                        if dist < minDist then
+                                            minDist = dist
+                                            targetChest = b
+                                        end
                                     end
                                 end
                             end
                         end
-                        if nearest and Network and Network.Fire then
-                            Network.Fire("Breakables_PlayerAttackBreakable", nearest.Name, "1")
-                            Network.Fire("Breakables_PlayerAttackBreakable", nearest.Name, {})
+
+                        if targetChest and Network and Network.Fire then
+                            Network.Fire("Breakables_PlayerAttackBreakable", targetChest.Name, "1")
+                            Network.Fire("Breakables_PlayerAttackBreakable", targetChest.Name, {})
                         end
                     end
                 end)
