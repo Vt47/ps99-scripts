@@ -843,64 +843,43 @@ task.spawn(function()
         return nil, nil, nil
     end
 
-    -- TẤN CÔNG & CLICK TRỰC TIẾP VÀO YETI (KẾT HỢP VIRTUAL CLICK 3D CHUẨN XÁC VÀ NETWORK REMOTE)
+    -- TẤN CÔNG YETI BẰNG NETWORK (KHÔNG CHẠM VÀO MÀN HÌNH NÉ NÚT SEND PETS)
     local function performAttackYeti(targetObj)
         if not STATE.AutoClickYeti then return end
 
-        local targetUID = nil
-        local yetiPart = nil
-
-        if typeof(targetObj) == "Instance" then
-            targetUID = targetObj.Name
-            yetiPart = targetObj:IsA("BasePart") and targetObj or (targetObj:IsA("Model") and (targetObj.PrimaryPart or targetObj:FindFirstChildWhichIsA("BasePart", true)))
-        end
-
-        local Things = workspace:FindFirstChild("__THINGS")
-        local Breakables = Things and Things:FindFirstChild("Breakables")
-        if not targetUID and Breakables then
-            for _, b in pairs(Breakables:GetChildren()) do
-                local bId = tostring(b:GetAttribute("BreakableID") or "")
-                local areaId = tostring(b:GetAttribute("AreaID") or "")
-                if string.lower(bId) == "yeti" or string.lower(areaId) == "yeti" then
-                    targetUID = b.Name
-                    yetiPart = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
-                    break
-                end
-            end
-        end
-
-        -- 1. CLICK CHÂN THẬT VÀO THÂN YETI BẰNG VIRTUALUSER (ĐẢM BẢO VUNG TAY, NẢY SỐ SÁT THƯƠNG & TRÁNH 100% SEND PETS)
-        pcall(function()
-            if VirtualUser and Camera then
-                local clickPos = nil
-
-                -- Tính tọa độ 2D của phần ngực/đầu Yeti trên màn hình
-                if yetiPart then
-                    local screenPos, onScreen = Camera:WorldToViewportPoint(yetiPart.Position + Vector3.new(0, 6, 0))
-                    if onScreen then
-                        clickPos = Vector2.new(screenPos.X, screenPos.Y)
+        if Network and Network.Fire then
+            pcall(function()
+                local targetUID = nil
+                if typeof(targetObj) == "Instance" then
+                    targetUID = targetObj.Name
+                else
+                    local Things = workspace:FindFirstChild("__THINGS")
+                    local Breakables = Things and Things:FindFirstChild("Breakables")
+                    if Breakables then
+                        for _, b in pairs(Breakables:GetChildren()) do
+                            local bId = tostring(b:GetAttribute("BreakableID") or "")
+                            local areaId = tostring(b:GetAttribute("AreaID") or "")
+                            if string.lower(bId) == "yeti" or string.lower(areaId) == "yeti" then
+                                targetUID = b.Name
+                                break
+                            end
+                        end
+                        if not targetUID and STATE.YetiArenaCFrame then
+                            for _, b in pairs(Breakables:GetChildren()) do
+                                local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
+                                if part and (part.Position - STATE.YetiArenaCFrame.Position).Magnitude < 90 then
+                                    targetUID = b.Name
+                                    break
+                                end
+                            end
+                        end
                     end
                 end
 
-                -- Dự phòng: Phần trên giữa màn hình (Y = 28% chiều cao) nơi đầu/ngực Yeti đứng sừng sững
-                if not clickPos then
-                    local vSize = Camera.ViewportSize
-                    clickPos = Vector2.new(vSize.X * 0.5, vSize.Y * 0.28)
+                if targetUID then
+                    Network.Fire("Breakables_PlayerAttackBreakable", targetUID, "1")
+                    Network.Fire("Breakables_PlayerAttackBreakable", targetUID, {})
                 end
-
-                -- CHỐT AN TOÀN: Chỉ click khi ở nửa trên màn hình (Y < 46%), cách xa 100% nút "Send Pets" ở nửa dưới (Y > 52%)
-                if clickPos.Y < Camera.ViewportSize.Y * 0.46 then
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton1(clickPos)
-                end
-            end
-        end)
-
-        -- 2. GỬI GÓI REMOTE NETWORK ĐỂ ĐẢM BẢO SÁT THƯƠNG TỪ XA VÀ ĐIỀU PET LAO VÀO CẮN
-        if targetUID and Network and Network.Fire then
-            pcall(function()
-                Network.Fire("Breakables_PlayerAttackBreakable", targetUID, "1")
-                Network.Fire("Breakables_PlayerAttackBreakable", targetUID, {})
             end)
         end
     end
@@ -922,12 +901,6 @@ task.spawn(function()
                             STATE.YetiArenaCFrame = yetiPos
                         end
                         safeTeleport(yetiPos + Vector3.new(0, 2, 6))
-                        pcall(function()
-                            local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-                            if hrp and typeof(yetiPos) == "CFrame" then
-                                hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(yetiPos.Position.X, hrp.Position.Y, yetiPos.Position.Z))
-                            end
-                        end)
                     end
                 else
                     STATE.CurrentYetiObj = nil
