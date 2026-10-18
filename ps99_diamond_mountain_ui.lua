@@ -1000,7 +1000,7 @@ task.spawn(function()
         end)
     end
 
-    local Library, Client, Directory, Save, PetDirectory, Network
+    local Library, Client, Directory, Save, PetDirectory, Network, EggCmds
     pcall(function()
         Library = RS:WaitForChild("Library", 8)
         if Library then
@@ -1009,6 +1009,7 @@ task.spawn(function()
             if Client and Client:FindFirstChild("Save") then Save = require(Client.Save) end
             if Directory and Directory:FindFirstChild("Pets") then PetDirectory = require(Directory.Pets) end
             if Client and Client:FindFirstChild("Network") then Network = require(Client.Network) end
+            if Client and Client:FindFirstChild("EggCmds") then EggCmds = require(Client.EggCmds) end
         end
     end)
     if not Network and RS:FindFirstChild("Network") then Network = RS.Network end
@@ -1308,7 +1309,7 @@ task.spawn(function()
         return nil, nil
     end
 
-    -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG
+    -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG (NON-DESTRUCTIVE)
     local function handleEggOpeningVisuals()
         pcall(function()
             if STATE.SkipAnimation then
@@ -1325,13 +1326,9 @@ task.spawn(function()
                 end
             end
 
-            if STATE.ShowHatchPopup then
-                local eggOpening = Player.PlayerGui:FindFirstChild("EggOpening")
-                if eggOpening then eggOpening.Enabled = true end
-
-                task.wait(1.2)
-
-                -- Tự động bấm nút OK / Continue / Close để đóng pop-up kết quả
+            -- Tự động đóng pop-up OK / Continue / Dismiss kết quả mở trứng
+            task.spawn(function()
+                task.wait(0.3)
                 for _, btn in pairs(Player.PlayerGui:GetDescendants()) do
                     if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
                         local bName = string.lower(btn.Name)
@@ -1344,22 +1341,156 @@ task.spawn(function()
                         end
                     end
                 end
-            else
-                local eggOpening = Player.PlayerGui:FindFirstChild("EggOpening")
-                if eggOpening then
-                    eggOpening.Enabled = false
-                    for _, el in pairs(eggOpening:GetDescendants()) do
-                        if el:IsA("GuiObject") then el.Visible = false end
-                    end
+            end)
+        end)
+    end
+
+    -- HÀM MỞ TRỨNG TỔNG HỢP (MULTI-ENGINE EGG HATCHER)
+    local function attemptHatchEgg(eggObj, eggId, amt)
+        if not eggId and not eggObj then return false end
+        amt = amt or 1
+        local hatched = false
+
+        -- ENGINE 1: MODULE NỘI BỘ GAME (Library.Client.EggCmds)
+        if EggCmds then
+            pcall(function()
+                if EggCmds.Purchase then
+                    EggCmds.Purchase(eggId, amt)
+                    hatched = true
+                elseif EggCmds.Open then
+                    EggCmds.Open(eggId, amt)
+                    hatched = true
+                elseif EggCmds.RequestPurchase then
+                    EggCmds.RequestPurchase(eggId, amt)
+                    hatched = true
+                elseif EggCmds.Hatch then
+                    EggCmds.Hatch(eggId, amt)
+                    hatched = true
                 end
-                for _, g in pairs(Player.PlayerGui:GetChildren()) do
-                    if g:IsA("ScreenGui") and (string.find(string.lower(g.Name), "egg") or string.find(string.lower(g.Name), "hatch")) then
-                        g.Enabled = false
+            end)
+            if not hatched and eggObj and eggObj.Name ~= eggId then
+                pcall(function()
+                    if EggCmds.Purchase then
+                        EggCmds.Purchase(eggObj.Name, amt)
+                        hatched = true
+                    elseif EggCmds.Open then
+                        EggCmds.Open(eggObj.Name, amt)
+                        hatched = true
+                    end
+                end)
+            end
+        end
+
+        -- ENGINE 2: TẤT CẢ CANDIDATE REMOTES QUA NETWORK.INVOKE
+        if not hatched and Network and Network.Invoke then
+            local candidateFuncs = {
+                "Eggs_RequestPurchase",
+                "CustomEggs_RequestPurchase",
+                "CustomEggs_Purchase",
+                "CustomEggs_Hatch",
+                "Eggs_Hatch",
+                "Eggs_Purchase",
+                "TrailEggs_RequestPurchase",
+                "TrailEgg_RequestPurchase",
+                "Trail_RequestPurchase"
+            }
+            for _, rName in ipairs(candidateFuncs) do
+                -- Thử với eggId
+                pcall(function()
+                    local r = Network.Invoke(rName, eggId, amt)
+                    if r ~= nil and r ~= false then hatched = true end
+                end)
+                if hatched then break end
+
+                -- Thử 3 tham số (golden/charged flag)
+                pcall(function()
+                    local r = Network.Invoke(rName, eggId, amt, false)
+                    if r ~= nil and r ~= false then hatched = true end
+                end)
+                if hatched then break end
+
+                -- Thử với UID eggObj.Name
+                if eggObj and eggObj.Name ~= eggId then
+                    pcall(function()
+                        local r = Network.Invoke(rName, eggObj.Name, amt)
+                        if r ~= nil and r ~= false then hatched = true end
+                    end)
+                    if hatched then break end
+                end
+            end
+        end
+
+        -- ENGINE 3: TẤT CẢ CANDIDATE REMOTES QUA NETWORK.FIRE
+        if not hatched and Network and Network.Fire then
+            local candidateEvents = {
+                "Eggs_RequestPurchase",
+                "CustomEggs_RequestPurchase",
+                "CustomEggs_Purchase",
+                "CustomEggs_Hatch",
+                "Eggs_Hatch",
+                "Eggs_Purchase"
+            }
+            for _, rName in ipairs(candidateEvents) do
+                pcall(function()
+                    Network.Fire(rName, eggId, amt)
+                end)
+                if eggObj and eggObj.Name ~= eggId then
+                    pcall(function()
+                        Network.Fire(rName, eggObj.Name, amt)
+                    end)
+                end
+            end
+        end
+
+        -- ENGINE 4: KÍCH HOẠT NÚT BẤM GUI MỞ TRỨNG TRÊN MÀN HÌNH
+        pcall(function()
+            for _, g in pairs(Player.PlayerGui:GetDescendants()) do
+                if (g:IsA("TextButton") or g:IsA("ImageButton")) and g.Visible then
+                    local bName = string.lower(g.Name)
+                    local bText = g:IsA("TextButton") and string.lower(g.Text) or ""
+                    if bName == "1egg" or bName == "3egg" or bName == "autohatch" or bName == "hatch"
+                       or bText == "1 egg" or bText == "3 eggs" or bText == "auto hatch" or bText == "buy" then
+                        if g.MouseButton1Click then g.MouseButton1Click:Fire() end
+                        if g.Activated then g.Activated:Fire() end
+                        hatched = true
                     end
                 end
             end
         end)
+
+        -- ENGINE 5: KÍCH HOẠT PROXIMITYPROMPT NẾU CÓ
+        if eggObj then
+            for _, pp in pairs(eggObj:GetDescendants()) do
+                if pp:IsA("ProximityPrompt") and pp.Enabled then
+                    pcall(function()
+                        if fireproximityprompt then
+                            fireproximityprompt(pp)
+                            hatched = true
+                        end
+                    end)
+                end
+            end
+        end
+
+        return hatched
     end
+
+    -- BỘ ĐẾM THÚ CƯNG TRONG KHO ĐỂ THEO DÕI SỐ TRỨNG ĐÃ MỞ CHÍNH XÁC
+    local lastPetCount = nil
+    local function getInventoryPetCount()
+        if not Save or not Save.Get then return nil end
+        local count = 0
+        local ok = pcall(function()
+            local s = Save.Get()
+            if s and s.Inventory and s.Inventory.Pet then
+                for _, pData in pairs(s.Inventory.Pet) do
+                    count = count + (pData._am or 1)
+                end
+            end
+        end)
+        return ok and count or nil
+    end
+    lastPetCount = getInventoryPetCount()
 
     -- VÒNG LẶP ĐIỀU PHỐI HANG, RƯƠNG & TRỨNG CHUYÊN SÂU (UNIFIED COORDINATOR)
     task.spawn(function()
@@ -1422,9 +1553,9 @@ task.spawn(function()
                         end
                         local dist = (eggCF.Position - hrp.Position).Magnitude
                         
-                        -- Nếu đang đứng xa quả trứng > 8 studs, tự động teleport ngay trước mặt trứng
-                        if dist > 8 then
-                            local standPos = eggCF.Position + Vector3.new(0, 1, 4)
+                        -- Teleport đứng ngay trên bệ trứng (<= 4 studs) để kích hoạt toàn bộ cơ chế của game
+                        if dist > 4 then
+                            local standPos = eggCF.Position + Vector3.new(0, 1.2, 0)
                             safeTeleportTo(standPos, eggCF.Position)
                             task.wait(0.2)
                         end
@@ -1436,56 +1567,23 @@ task.spawn(function()
                         end
                     end
                     
-                    if eggId and eggId ~= "Nearest" and eggId ~= "" and Network and Network.Invoke then
+                    if eggId and eggId ~= "Nearest" and eggId ~= "" then
                         STATE.CurrentAction = "🥚 Mở trứng: " .. eggId .. " (H" .. STATE.SelectedCave .. ")"
                         
                         local amt = STATE.HatchAmount or 1
-                        local hatchedThisCycle = false
-
-                        -- 1. Thử remote chuẩn Eggs_RequestPurchase với tên eggId
-                        local s1, r1 = pcall(function()
-                            return Network.Invoke("Eggs_RequestPurchase", eggId, amt)
-                        end)
-                        if s1 and r1 ~= nil and r1 ~= false then hatchedThisCycle = true end
-
-                        -- 2. Thử remote với UID eggObj.Name nếu tên khác eggId
-                        if not hatchedThisCycle and eggObj and eggObj.Name ~= eggId then
-                            local s2, r2 = pcall(function()
-                                return Network.Invoke("Eggs_RequestPurchase", eggObj.Name, amt)
-                            end)
-                            if s2 and r2 ~= nil and r2 ~= false then hatchedThisCycle = true end
-                        end
-
-                        -- 3. Thử remote CustomEggs_RequestPurchase / CustomEggs_Purchase
-                        if not hatchedThisCycle then
-                            pcall(function()
-                                local r3 = Network.Invoke("CustomEggs_RequestPurchase", eggId, amt)
-                                if r3 ~= nil and r3 ~= false then hatchedThisCycle = true end
-                            end)
-                        end
-                        if not hatchedThisCycle and eggObj then
-                            pcall(function()
-                                local r4 = Network.Invoke("CustomEggs_RequestPurchase", eggObj.Name, amt)
-                                if r4 ~= nil and r4 ~= false then hatchedThisCycle = true end
-                            end)
-                        end
-
-                        -- 4. Kích hoạt ProximityPrompt nếu có
-                        if eggObj then
-                            for _, pp in pairs(eggObj:GetDescendants()) do
-                                if pp:IsA("ProximityPrompt") and pp.Enabled then
-                                    pcall(function()
-                                        if fireproximityprompt then
-                                            fireproximityprompt(pp)
-                                            hatchedThisCycle = true
-                                        end
-                                    end)
-                                end
+                        local hatchedThisCycle = attemptHatchEgg(eggObj, eggId, amt)
+                        
+                        -- Cập nhật bộ đếm số trứng đã mở
+                        local curPetCount = getInventoryPetCount()
+                        if curPetCount and lastPetCount then
+                            if curPetCount > lastPetCount then
+                                local deltaPets = curPetCount - lastPetCount
+                                STATE.TotalHatchedEggs = STATE.TotalHatchedEggs + deltaPets
                             end
+                            lastPetCount = curPetCount
+                        elseif hatchedThisCycle then
+                            STATE.TotalHatchedEggs = STATE.TotalHatchedEggs + amt
                         end
-
-                        -- Tăng số trứng đã mở và cập nhật giao diện
-                        STATE.TotalHatchedEggs = STATE.TotalHatchedEggs + amt
                         
                         handleEggOpeningVisuals()
                     else

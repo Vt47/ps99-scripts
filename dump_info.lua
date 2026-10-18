@@ -1,6 +1,6 @@
 --========================================================================
--- PS99 DIAGNOSTIC SCANNER & DEBUGGER TOOL
--- Quét toàn bộ Breakables, Boss Yeti, GUI và Trứng trong game
+-- PS99 DIAGNOSTIC SCANNER & EGG DEBUGGER TOOL (V2 CHUYÊN SÂU)
+-- Quét toàn bộ Breakables, Boss Yeti, GUI, Remotes, Client Modules & Trứng
 -- Tự động gửi kết quả về Discord Webhook và copy vào Clipboard
 --========================================================================
 
@@ -19,155 +19,208 @@ local function log(str)
     print("[PS99 Debug] " .. str)
 end
 
-log("=== BẮT ĐẦU QUÉT DỮ LIỆU PS99 ===")
+log("=== BẮT ĐẦU QUÉT DỮ LIỆU PS99 CHUYÊN SÂU ===")
 log("Tài khoản: " .. Player.Name)
 local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
 if hrp then
     log(string.format("Tọa độ hiện tại: Vector3.new(%.1f, %.1f, %.1f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z))
 end
 
--- 1. QUÉT TẤT CẢ CÁC GUI LIÊN QUAN ĐẾN YETI, BOSS, RƯƠNG HANG & TRỨNG
-log("\n--- 1. CÁC GUI TRÊN MÀN HÌNH (BOSS, HANG, RƯƠNG, TRỨNG, COOLDOWN) ---")
-local foundGuiCount = 0
-for _, g in pairs(Player.PlayerGui:GetDescendants()) do
-    if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible and g.Text ~= "" then
-        local t = string.lower(g.Text)
-        if string.find(t, "yeti") or string.find(t, "returns") or string.find(t, "team up")
-           or string.find(t, "damage") or string.find(t, "again in") or string.find(t, "chest")
-           or string.find(t, "trail") or string.find(t, "egg") or string.find(t, "luck")
-           or string.find(t, "hatch") or string.find(t, "cave") or string.find(t, "unlock") then
-            foundGuiCount = foundGuiCount + 1
-            log(string.format("• GUI [%s]: \"%s\"", g.Name, g.Text))
-            log(string.format("  Parent: %s", g.Parent and g.Parent.Name or "None"))
-        end
-    end
-end
-if foundGuiCount == 0 then log("Không có GUI nào liên quan trên màn hình.") end
-
--- 2. QUÉT CÁC BREAKABLES GẦN BẠN
-log("\n--- 2. DANH SÁCH BREAKABLES TRONG BÁN KÍNH 180 STUDS ---")
 local Things = workspace:FindFirstChild("__THINGS")
-local Breakables = Things and Things:FindFirstChild("Breakables")
-local bCount = 0
-if Breakables then
-    for _, b in pairs(Breakables:GetChildren()) do
-        local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
-        local dist = (part and hrp) and (part.Position - hrp.Position).Magnitude or 9999
-        if dist < 180 then
-            bCount = bCount + 1
-            log(string.format("• Breakable: \"%s\" (Cách: %.1f studs)", b.Name, dist))
-            for k, v in pairs(b:GetAttributes()) do
-                log(string.format("   - %s = %s", tostring(k), tostring(v)))
-            end
+
+-- 1. QUÉT TOÀN BỘ CÁC REMOTES TRONG __THINGS.__REMOTES
+log("\n--- 1. DANH SÁCH REMOTES TRONG __THINGS.__REMOTES ---")
+local Remotes = Things and Things:FindFirstChild("__REMOTES")
+if Remotes then
+    local matchedRemotes = {}
+    local allRemoteNames = {}
+    for _, r in pairs(Remotes:GetChildren()) do
+        table.insert(allRemoteNames, r.Name)
+        local n = string.lower(r.Name)
+        if string.find(n, "egg") or string.find(n, "hatch") or string.find(n, "buy")
+           or string.find(n, "custom") or string.find(n, "trail") or string.find(n, "mountain")
+           or string.find(n, "summit") or string.find(n, "purchase") or string.find(n, "open") then
+            table.insert(matchedRemotes, string.format("• [%s] %s", r.ClassName, r.Name))
         end
     end
-    log(string.format("Tổng cộng: %d breakable gần bạn.", bCount))
-else
-    log("Không tìm thấy workspace.__THINGS.Breakables")
-end
-
--- 3. QUÉT TRỨNG (EGGS) VÀ CÁC FOLDER TRONG __THINGS
-log("\n--- 3. THƯ MỤC TRONG __THINGS & DANH SÁCH TRỨNG ---")
-if Things then
-    local tFolders = {}
-    for _, ch in pairs(Things:GetChildren()) do
-        table.insert(tFolders, ch.Name)
+    if #matchedRemotes > 0 then
+        log("Remotes liên quan đến Trứng / Mua / Hang:\n" .. table.concat(matchedRemotes, "\n"))
+    else
+        log("Không tìm thấy remote nào chứa từ khóa egg/hatch/custom/trail.")
     end
-    log("• Folders trong __THINGS: " .. table.concat(tFolders, ", "))
+    log(string.format("Tổng số remotes trong game: %d. Danh sách tóm tắt: %s", #allRemoteNames, table.concat(allRemoteNames, ", ")))
+else
+    log("Không tìm thấy workspace.__THINGS.__REMOTES!")
 end
 
-local eggFoundTotal = 0
--- Quét các folder trứng có thể có trong __THINGS
-local possibleEggFolders = { "Eggs", "CustomEggs", "EggStands", "Instances" }
+-- 2. QUÉT CLIENT MODULES TRONG REPLICATEDSTORAGE.LIBRARY.CLIENT
+log("\n--- 2. CÁC MODULE TRONG LIBRARY.CLIENT ---")
+local Lib = RS:FindFirstChild("Library")
+local Client = Lib and Lib:FindFirstChild("Client")
+local Network = nil
+if Client then
+    local clientModNames = {}
+    for _, mod in pairs(Client:GetChildren()) do
+        table.insert(clientModNames, mod.Name)
+        local mName = string.lower(mod.Name)
+        if string.find(mName, "egg") or string.find(mName, "hatch") or string.find(mName, "custom") or string.find(mName, "network") then
+            pcall(function()
+                local reqMod = require(mod)
+                if type(reqMod) == "table" then
+                    local keys = {}
+                    for k, v in pairs(reqMod) do
+                        table.insert(keys, tostring(k) .. " (" .. typeof(v) .. ")")
+                    end
+                    log(string.format("• Module [%s] exports: %s", mod.Name, table.concat(keys, ", ")))
+                end
+            end)
+        end
+    end
+    log("Tất cả Modules trong Client: " .. table.concat(clientModNames, ", "))
+    pcall(function()
+        if Client:FindFirstChild("Network") then Network = require(Client.Network) end
+    end)
+else
+    log("Không tìm thấy Library.Client!")
+end
+
+-- 3. QUÉT CHI TIẾT ĐỐI TƯỢNG TRỨNG GẦN BẠN NHẤT
+log("\n--- 3. CHI TIẾT TRỨNG GẦN NHẤT TRONG BÁN KÍNH 180 STUDS ---")
+local nearestEggObj, nearestEggDist = nil, 180
+local possibleEggFolders = { "CustomEggs", "Eggs", "RenderedEggs", "ZoneEggs" }
 for _, fName in ipairs(possibleEggFolders) do
     local f = Things and Things:FindFirstChild(fName)
     if f then
         for _, egg in pairs(f:GetChildren()) do
             local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart", true)))
             local dist = (part and hrp) and (part.Position - hrp.Position).Magnitude or 9999
+            if dist < nearestEggDist then
+                nearestEggDist = dist
+                nearestEggObj = egg
+            end
             if dist < 180 then
-                eggFoundTotal = eggFoundTotal + 1
                 log(string.format("• Trứng trong [%s]: \"%s\" (Cách: %.1f studs)", fName, egg.Name, dist))
                 for k, v in pairs(egg:GetAttributes()) do
-                    log(string.format("     %s = %s", tostring(k), tostring(v)))
+                    log(string.format("     Attr: %s = %s", tostring(k), tostring(v)))
                 end
             end
         end
     end
 end
 
--- Quét toàn bộ Workspace tìm Model hoặc Part liên quan đến Trứng / Chest / Trail trong 150 studs
-for _, obj in pairs(workspace:GetDescendants()) do
-    if (obj:IsA("Model") or obj:IsA("BasePart")) and hrp then
-        local lName = string.lower(obj.Name)
-        if (string.find(lName, "egg") or string.find(lName, "trail") or string.find(lName, "summit")) and not string.find(lName, "anim") then
-            local part = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)))
-            local dist = part and (part.Position - hrp.Position).Magnitude or 9999
-            if dist < 100 then
-                log(string.format("• Workspace Object: \"%s\" (Class: %s, Cách: %.1f studs, Parent: %s)", obj.Name, obj.ClassName, dist, obj.Parent and obj.Parent.Name or "nil"))
+if nearestEggObj then
+    log("\n>> Cấu trúc bên trong quả trứng gần nhất: " .. nearestEggObj.Name)
+    for _, ch in pairs(nearestEggObj:GetDescendants()) do
+        local info = ch.ClassName
+        if ch:IsA("BasePart") then
+            info = string.format("BasePart (Pos: %.1f, %.1f, %.1f; Size: %.1f, %.1f, %.1f; CanCollide: %s)",
+                ch.Position.X, ch.Position.Y, ch.Position.Z, ch.Size.X, ch.Size.Y, ch.Size.Z, tostring(ch.CanCollide))
+        elseif ch:IsA("ProximityPrompt") then
+            info = string.format("ProximityPrompt (Action: \"%s\", Object: \"%s\", Enabled: %s)", ch.ActionText, ch.ObjectText, tostring(ch.Enabled))
+        end
+        log(string.format("   - [%s] \"%s\" -> %s", ch.ClassName, ch.Name, info))
+    end
+end
+
+-- 4. THỬ NGHIỆM GỌI CÁC CANDIDATE REMOTES ĐỂ MỞ TRỨNG (TEST CALLS)
+log("\n--- 4. THỬ NGHIỆM GỌI REMOTES MỞ TRỨNG (LIVE TEST) ---")
+if nearestEggObj and Network then
+    local eggId = nearestEggObj:GetAttribute("DM_EggId") or nearestEggObj.Name
+    local eggName = nearestEggObj.Name
+    log(string.format("Target Egg: eggId=\"%s\", eggName=\"%s\"", tostring(eggId), tostring(eggName)))
+
+    local candidateRemotes = {
+        "Eggs_RequestPurchase",
+        "CustomEggs_RequestPurchase",
+        "CustomEggs_Purchase",
+        "CustomEggs_Hatch",
+        "Eggs_Hatch",
+        "Eggs_Purchase",
+        "TrailEggs_RequestPurchase",
+        "TrailEgg_RequestPurchase",
+        "Trail_RequestPurchase"
+    }
+
+    for _, rName in ipairs(candidateRemotes) do
+        -- Test A: Invoke với eggId
+        if Network.Invoke then
+            local s, res1, res2, res3 = pcall(function()
+                return Network.Invoke(rName, eggId, 1)
+            end)
+            log(string.format("Invoke(\"%s\", \"%s\", 1) => Success=%s | Res1=%s | Res2=%s | Res3=%s",
+                rName, tostring(eggId), tostring(s), tostring(res1), tostring(res2), tostring(res3)))
+
+            -- Test B: Invoke với eggName (UUID)
+            if eggName ~= eggId then
+                local s2, r2_1, r2_2 = pcall(function()
+                    return Network.Invoke(rName, eggName, 1)
+                end)
+                log(string.format("Invoke(\"%s\", \"%s\", 1) => Success=%s | Res1=%s | Res2=%s",
+                    rName, tostring(eggName), tostring(s2), tostring(r2_1), tostring(r2_2)))
             end
+        end
+
+        -- Test C: Fire với eggId
+        if Network.Fire then
+            local sf, errf = pcall(function()
+                Network.Fire(rName, eggId, 1)
+            end)
+            log(string.format("Fire(\"%s\", \"%s\", 1) => Success=%s | Err=%s",
+                rName, tostring(eggId), tostring(sf), tostring(errf)))
+        end
+    end
+else
+    log("Không đủ điều kiện test remotes (Không tìm thấy trứng gần hoặc Network nil).")
+end
+
+-- 5. QUÉT GIAO DIỆN HATCH TRÊN MÀN HÌNH (PLAYERGUI)
+log("\n--- 5. CHI TIẾT NÚT BẤM / GUI LIÊN QUAN ĐẾN HATCH TRÊN MÀN HÌNH ---")
+for _, g in pairs(Player.PlayerGui:GetDescendants()) do
+    if (g:IsA("TextLabel") or g:IsA("TextButton") or g:IsA("ImageButton")) and g.Visible then
+        local t = g:IsA("TextButton") and g.Text or (g:IsA("TextLabel") and g.Text or "")
+        local lText = string.lower(t)
+        local lName = string.lower(g.Name)
+        if string.find(lText, "egg") or string.find(lText, "hatch") or string.find(lText, "buy")
+           or string.find(lName, "egg") or string.find(lName, "hatch") or string.find(lName, "buy")
+           or string.find(lName, "auto") or string.find(lText, "auto") then
+            log(string.format("• GUI [%s] \"%s\" (Text=\"%s\", Parent=\"%s\")",
+                g.ClassName, g.Name, t, g.Parent and g.Parent.Name or "nil"))
         end
     end
 end
 
--- Quét ProximityPrompts gần bạn (để biết nút bấm tương tác mở trứng / hang)
-for _, pp in pairs(workspace:GetDescendants()) do
-    if pp:IsA("ProximityPrompt") and pp.Parent and hrp then
-        local pPart = pp.Parent:IsA("BasePart") and pp.Parent or (pp.Parent:IsA("Model") and (pp.Parent.PrimaryPart or pp.Parent:FindFirstChildWhichIsA("BasePart", true)))
-        local dist = pPart and (pPart.Position - hrp.Position).Magnitude or 9999
-        if dist < 80 then
-            log(string.format("• Nút bấm ProximityPrompt: Action=\"%s\", Object=\"%s\" (Cách: %.1f studs, Parent: %s)", pp.ActionText, pp.ObjectText, dist, pp.Parent.Name))
-        end
-    end
-end
-
--- Quét Directory.Eggs trong ReplicatedStorage nếu có
-pcall(function()
-    local Lib = RS:FindFirstChild("Library")
-    local Dir = Lib and Lib:FindFirstChild("Directory")
-    if Dir and Dir:FindFirstChild("Eggs") then
-        local EggModule = require(Dir.Eggs)
-        log("\n--- 4. TÊN CÁC TRỨNG ĐẶC BIỆT TRONG DIRECTORY ---")
-        local count = 0
-        for eggId, _ in pairs(EggModule) do
-            local s = string.lower(tostring(eggId))
-            if string.find(s, "diamond") or string.find(s, "mountain") or string.find(s, "trail") or string.find(s, "cave") or string.find(s, "yeti") or string.find(s, "summit") then
-                count = count + 1
-                log(string.format("• Event Egg ID: \"%s\"", tostring(eggId)))
-            end
-        end
-        if count == 0 then log("Không có egg event nào chứa từ khóa diamond/mountain/trail/cave.") end
-    end
-end)
-
+-- 6. TỔNG HỢP VÀ GỬI BÁO CÁO
 local fullLog = table.concat(logLines, "\n")
 
--- Copy Clipboard
 if setclipboard then
     setclipboard(fullLog)
-    log("\n=> [THÀNH CÔNG] ĐÃ COPY TOÀN BỘ LOG VÀO BỘ NHỚ TẠM (CLIPBOARD)!")
+    log("\n=> [THÀNH CÔNG] ĐÃ COPY TOÀN BỘ LOG VÀO CLIPBOARD!")
 end
 
--- Bật popup thông báo
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "📋 Đã Quét Xong Log!",
+        Title = "📋 Đã Quét Xong Log V2!",
         Text = "Đã copy vào Clipboard & gửi về Discord Webhook.",
         Duration = 5
     })
 end)
 
--- Gửi Webhook
 if req and WEBHOOK and WEBHOOK ~= "" then
     pcall(function()
-        req({
-            Url = WEBHOOK,
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode({
-                username = "PS99 Diagnostic Tool",
-                content = "📋 **BÁO CÁO SCAN LOG TỪ GAME**\n```yaml\n" .. string.sub(fullLog, 1, 1900) .. "\n```"
+        -- Chia nhỏ nếu log quá dài (Discord giới hạn 2000 ký tự / tin)
+        local maxLen = 1900
+        for i = 1, math.min(#fullLog, 7600), maxLen do
+            local chunk = string.sub(fullLog, i, i + maxLen - 1)
+            req({
+                Url = WEBHOOK,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode({
+                    username = "PS99 Deep Egg Scanner",
+                    content = "```yaml\n" .. chunk .. "\n```"
+                })
             })
-        })
+            task.wait(0.5)
+        end
     end)
 end
