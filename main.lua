@@ -1,10 +1,8 @@
 --========================================================================
 -- PS99 DIAMOND MOUNTAIN - SUMMIT AFK & YETI BOSS SUITE (DELTA EXECUTOR)
--- Tối ưu hóa 100% cho Delta Executor (Mobile & PC)
--- Tích hợp bảo vệ gethui(), DisplayOrder 999999, Touch/Mouse Event
+-- Phiên bản V2: Sửa triệt để lỗi Yeti Boss, Auto Click, và Auto Hatch không pop-up
 --========================================================================
 
--- 1. ĐỢI GAME TẢI XONG HOÀN TOÀN
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
@@ -15,23 +13,25 @@ local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
 local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 local RS = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
 
 local Player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local Camera = workspace.CurrentCamera
 
--- Thông báo tức thì để người dùng biết script ĐANG CHẠY
+-- Bật thông báo
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "💎 PS99 Summit Suite",
-        Text = "Đang khởi tạo giao diện cho Delta Executor...",
-        Duration = 4
+        Title = "💎 PS99 Summit Suite V2",
+        Text = "Đang khởi tạo giao diện...",
+        Duration = 3
     })
 end)
 
--- 2. TÌM NƠI CHỨA GUI AN TOÀN TRÊN DELTA (gethui > CoreGui > PlayerGui)
+-- Tìm nơi chứa GUI cho Delta Executor
 local function getSafeGuiParent()
     if typeof(gethui) == "function" then
         local h = gethui()
@@ -51,16 +51,12 @@ end
 
 local GuiParent = getSafeGuiParent()
 
--- Xóa UI cũ nếu đang chạy
 pcall(function()
     for _, item in pairs(GuiParent:GetChildren()) do
-        if item.Name == "PS99_Summit_Suite" then
-            item:Destroy()
-        end
+        if item.Name == "PS99_Summit_Suite" then item:Destroy() end
     end
 end)
 
--- 3. TẠO SCREENGUI NGAY LẬP TỨC (DISPLAY ORDER CAO NHẤT ĐỂ KHÔNG BỊ CHE)
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "PS99_Summit_Suite"
 ScreenGui.ResetOnSpawn = false
@@ -79,6 +75,8 @@ local STATE = {
     YetiKilledCount = 0,
     YetiCooldownAlert = true,
     IsFightingYeti = false,
+    YetiArenaCFrame = nil,        -- Tọa độ đấu trường Yeti (có thể lưu tùy chỉnh)
+    YetiStatusText = "Đang quét...",
 
     -- [HANG NÚI & TRỨNG]
     SelectedCave = 1,
@@ -86,6 +84,7 @@ local STATE = {
     AutoHatch = false,
     SkipAnimation = true,
     SelectedEggName = "Nearest",
+    HatchAmount = 1,
 
     -- [BÃI FARM TIỀN]
     AutoFarmMoney = true,
@@ -122,14 +121,14 @@ local STATE = {
     TotalHuge = 0,
     TotalTitanic = 0,
     TotalGargantuan = 0,
-    CurrentAction = "Sẵn sàng hoạt động"
+    CurrentAction = "Sẵn sàng"
 }
 
 --========================================================================
--- TẠO GIAO DIỆN (UI TỐI ƯU CẢM ỨNG & CHUỘT)
+-- GIAO DIỆN NGƯỜI DÙNG (UI)
 --========================================================================
 
--- 1. NÚT TRÒN NỔI CHO MOBILE (FLOATING BUTTON)
+-- Nút tròn nổi
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Name = "ToggleButton"
 ToggleButton.Size = UDim2.new(0, 50, 0, 50)
@@ -150,7 +149,6 @@ ToggleStroke.Color = Color3.fromRGB(80, 140, 255)
 ToggleStroke.Thickness = 2
 ToggleStroke.Parent = ToggleButton
 
--- Kéo thả nút tròn mượt mà trên Mobile cảm ứng
 local isDraggingBtn = false
 local dragStartBtn, startPosBtn
 ToggleButton.InputBegan:Connect(function(input)
@@ -159,9 +157,7 @@ ToggleButton.InputBegan:Connect(function(input)
         dragStartBtn = input.Position
         startPosBtn = ToggleButton.Position
         input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                isDraggingBtn = false
-            end
+            if input.UserInputState == Enum.UserInputState.End then isDraggingBtn = false end
         end)
     end
 end)
@@ -173,11 +169,11 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- 2. KHUNG MENU CHÍNH (MAIN FRAME)
+-- Khung chính
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-MainFrame.Size = UDim2.new(0, 500, 0, 340)
+MainFrame.Size = UDim2.new(0, 500, 0, 350)
 MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 28)
 MainFrame.BorderSizePixel = 0
@@ -194,7 +190,6 @@ MainStroke.Color = Color3.fromRGB(45, 52, 70)
 MainStroke.Thickness = 1.5
 MainStroke.Parent = MainFrame
 
--- Kéo thả thanh tiêu đề
 local isDraggingMain = false
 local dragStartMain, startPosMain
 MainFrame.InputBegan:Connect(function(input)
@@ -204,9 +199,7 @@ MainFrame.InputBegan:Connect(function(input)
             dragStartMain = input.Position
             startPosMain = MainFrame.Position
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    isDraggingMain = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then isDraggingMain = false end
             end)
         end
     end
@@ -219,13 +212,10 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Bấm nút tròn để bật/tắt menu
-local function toggleGui()
-    MainFrame.Visible = not MainFrame.Visible
-end
+local function toggleGui() MainFrame.Visible = not MainFrame.Visible end
 ToggleButton.Activated:Connect(toggleGui)
 
--- THANH TIÊU ĐỀ
+-- TopBar
 local TopBar = Instance.new("Frame")
 TopBar.Size = UDim2.new(1, 0, 0, 42)
 TopBar.BackgroundColor3 = Color3.fromRGB(24, 27, 38)
@@ -240,7 +230,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -60, 1, 0)
 TitleLabel.Position = UDim2.new(0, 12, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "💎 PS99 SUMMIT SUITE | YETI & FARM"
+TitleLabel.Text = "💎 PS99 SUMMIT SUITE V2 | YETI & FARM"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 13
@@ -260,11 +250,9 @@ CloseBtn.Parent = TopBar
 local CloseCorner = Instance.new("UICorner")
 CloseCorner.CornerRadius = UDim.new(0, 8)
 CloseCorner.Parent = CloseBtn
-CloseBtn.Activated:Connect(function()
-    MainFrame.Visible = false
-end)
+CloseBtn.Activated:Connect(function() MainFrame.Visible = false end)
 
--- SIDEBAR MENU
+-- Sidebar
 local Sidebar = Instance.new("Frame")
 Sidebar.Size = UDim2.new(0, 125, 1, -42)
 Sidebar.Position = UDim2.new(0, 0, 0, 42)
@@ -281,7 +269,7 @@ local SidebarPad = Instance.new("UIPadding")
 SidebarPad.PaddingTop = UDim.new(0, 8)
 SidebarPad.Parent = Sidebar
 
--- VÙNG NỘI DUNG
+-- Content Container
 local ContentContainer = Instance.new("Frame")
 ContentContainer.Size = UDim2.new(1, -135, 1, -50)
 ContentContainer.Position = UDim2.new(0, 130, 0, 46)
@@ -289,7 +277,6 @@ ContentContainer.BackgroundTransparency = 1
 ContentContainer.Parent = MainFrame
 
 local Pages = {}
-
 local function createPage(name)
     local Page = Instance.new("ScrollingFrame")
     Page.Name = name
@@ -298,7 +285,7 @@ local function createPage(name)
     Page.ScrollBarThickness = 4
     Page.ScrollBarImageColor3 = Color3.fromRGB(80, 140, 255)
     Page.Visible = false
-    Page.CanvasSize = UDim2.new(0, 0, 0, 370)
+    Page.CanvasSize = UDim2.new(0, 0, 0, 420)
     Page.Parent = ContentContainer
 
     local Layout = Instance.new("UIListLayout")
@@ -360,7 +347,6 @@ btnDash.BackgroundColor3 = Color3.fromRGB(50, 110, 220)
 btnDash.TextColor3 = Color3.fromRGB(255, 255, 255)
 DashboardPage.Visible = true
 
--- HÀM TẠO WIDGET UI
 local function createToggle(parent, title, defaultVal, callback)
     local Frame = Instance.new("Frame")
     Frame.Size = UDim2.new(1, 0, 0, 38)
@@ -461,7 +447,8 @@ end
 
 -- TRANG 1: DASHBOARD
 local lblAction = createInfoCard(DashboardPage, "⚡ Hoạt Động:", STATE.CurrentAction)
-local lblYetiCount = createInfoCard(DashboardPage, "👹 Số Yeti Đã Diệt:", "0 con")
+local lblYetiStatus = createInfoCard(DashboardPage, "👹 Tình Trạng Yeti:", STATE.YetiStatusText)
+local lblYetiCount = createInfoCard(DashboardPage, "🏆 Số Yeti Đã Diệt:", "0 con")
 local lblDiamonds = createInfoCard(DashboardPage, "💎 Kim Cương:", "Đang tải...")
 local lblDiffDiamonds = createInfoCard(DashboardPage, "📈 Cày Được:", "+0 (+0/h)")
 local lblUptime = createInfoCard(DashboardPage, "⏱️ Thời Gian Treo:", "00h 00m 00s")
@@ -469,14 +456,87 @@ local lblPets = createInfoCard(DashboardPage, "🐾 Huge / Titanic:", "0 / 0")
 
 -- TRANG 2: YETI BOSS
 createToggle(YetiPage, "👹 Auto Tele & Đánh Yeti Khi Hồi Sinh", STATE.AutoYeti, function(v) STATE.AutoYeti = v end)
-createToggle(YetiPage, "⚔️ Auto Click Tấn Công Dồn Dập Vào Yeti", STATE.AutoClickYeti, function(v) STATE.AutoClickYeti = v end)
+createToggle(YetiPage, "⚔️ Auto Click & Xuất Pet Vào Yeti", STATE.AutoClickYeti, function(v) STATE.AutoClickYeti = v end)
 createToggle(YetiPage, "🔔 Báo Webhook Khi Hạ Gục Yeti", STATE.YetiCooldownAlert, function(v) STATE.YetiCooldownAlert = v end)
+
+createActionButton(YetiPage, "📍 Lưu Vị Trí Đấu Trường Yeti (Đứng Tại Bãi Boss)", Color3.fromRGB(40, 140, 90), function()
+    local char = Player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        STATE.YetiArenaCFrame = hrp.CFrame
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "📍 Lưu Đấu Trường Yeti",
+                Text = "Đã ghim tọa độ đấu trường Yeti thành công!",
+                Duration = 3
+            })
+        end)
+    end
+end)
+
+createActionButton(YetiPage, "🚀 Tele Tới Đấu Trường Yeti Ngay", Color3.fromRGB(80, 100, 160), function()
+    local char = Player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if STATE.YetiArenaCFrame and hrp then
+        hrp.CFrame = STATE.YetiArenaCFrame + Vector3.new(0, 3, 0)
+    end
+end)
+
 createActionButton(YetiPage, "🔄 Đặt Lại Bộ Đếm Yeti (Reset Count)", Color3.fromRGB(180, 80, 50), function()
     STATE.YetiKilledCount = 0
     lblYetiCount.Text = "0 con"
 end)
 
 -- TRANG 3: HANG NÚI & TRỨNG
+local lblSelectedEgg = createInfoCard(TrailsPage, "🥚 Trứng Đã Chọn:", STATE.SelectedEggName)
+
+createActionButton(TrailsPage, "🔍 Quét Quả Trứng Đang Đứng Trước Mặt", Color3.fromRGB(40, 160, 120), function()
+    local Things = workspace:FindFirstChild("__THINGS")
+    local EggsFolder = Things and Things:FindFirstChild("Eggs")
+    local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    local found = nil
+    if hrp and EggsFolder then
+        local minDist = 80
+        for _, egg in pairs(EggsFolder:GetChildren()) do
+            local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart")))
+            if part then
+                local dist = (part.Position - hrp.Position).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    found = egg.Name
+                end
+            end
+        end
+    end
+    if not found then
+        for _, obj in pairs(workspace:GetChildren()) do
+            if obj:IsA("Model") and string.find(string.lower(obj.Name), "egg") then
+                found = obj.Name
+                break
+            end
+        end
+    end
+    if found then
+        STATE.SelectedEggName = found
+        lblSelectedEgg.Text = found
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "🥚 Đã Tìm Thấy Trứng!",
+                Text = "Đã ghim: " .. found,
+                Duration = 3
+            })
+        end)
+    else
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "⚠️ Chưa Thấy Trứng",
+                Text = "Hãy đứng lại gần quả trứng trong hang rồi bấm lại nút này nhé!",
+                Duration = 3
+            })
+        end)
+    end
+end)
+
 local CaveSelectorFrame = Instance.new("Frame")
 CaveSelectorFrame.Size = UDim2.new(1, 0, 0, 42)
 CaveSelectorFrame.BackgroundColor3 = Color3.fromRGB(24, 28, 40)
@@ -541,14 +601,12 @@ createActionButton(TrailsPage, "🚀 Teleport Tới Hang Đã Chọn Ngay", Colo
     local pos = STATE.CaveCFrames[STATE.SelectedCave]
     local char = Player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if pos and hrp then
-        hrp.CFrame = pos + Vector3.new(0, 3, 0)
-    end
+    if pos and hrp then hrp.CFrame = pos + Vector3.new(0, 3, 0) end
 end)
 
 createToggle(TrailsPage, "📦 Auto Phá Rương (Chests) Trong Hang", STATE.AutoCaveChests, function(v) STATE.AutoCaveChests = v end)
-createToggle(TrailsPage, "🥚 Auto Mở Trứng (Auto Hatch Egg)", STATE.AutoHatch, function(v) STATE.AutoHatch = v end)
-createToggle(TrailsPage, "⏩ Bỏ Qua Hoạt Ảnh Mở Trứng (Skip Animation)", STATE.SkipAnimation, function(v) STATE.SkipAnimation = v end)
+createToggle(TrailsPage, "🥚 Auto Mở Trứng Liên Tục (Auto Hatch)", STATE.AutoHatch, function(v) STATE.AutoHatch = v end)
+createToggle(TrailsPage, "⏩ Tắt Animation & Chặn Toàn Bộ Pop-Up Trứng", STATE.SkipAnimation, function(v) STATE.SkipAnimation = v end)
 
 -- TRANG 4: BÃI FARM TIỀN
 createToggle(FarmPage, "💰 Tự Động Về Farm Tiền (Khi không mở trứng)", STATE.AutoFarmMoney, function(v) STATE.AutoFarmMoney = v end)
@@ -562,7 +620,7 @@ createActionButton(FarmPage, "📍 Lưu Vị Trí Đang Đứng Làm Bãi Farm",
         pcall(function()
             StarterGui:SetCore("SendNotification", {
                 Title = "📍 Lưu Bãi Farm",
-                Text = "Đã lưu vị trí cày tiền hiện tại thành công!",
+                Text = "Đã lưu bãi cày tiền hiện tại thành công!",
                 Duration = 3
             })
         end)
@@ -572,9 +630,7 @@ end)
 createActionButton(FarmPage, "🚀 Teleport Về Bãi Farm Ngay", Color3.fromRGB(80, 100, 160), function()
     local char = Player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if STATE.FarmCFrame and hrp then
-        hrp.CFrame = STATE.FarmCFrame + Vector3.new(0, 3, 0)
-    end
+    if STATE.FarmCFrame and hrp then hrp.CFrame = STATE.FarmCFrame + Vector3.new(0, 3, 0) end
 end)
 
 -- TRANG 5: CÀI ĐẶT
@@ -587,27 +643,14 @@ createToggle(SettingsPage, "🔋 Low CPU Mode (Màn Đen Tiết Kiệm Pin)", ST
     pcall(function() RunService:Set3dRenderingEnabled(not v) end)
 end)
 
--- Phím tắt cho PC
 pcall(function()
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
-            toggleGui()
-        end
+        if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then toggleGui() end
     end)
 end)
 
--- Thông báo giao diện đã sẵn sàng
-pcall(function()
-    StarterGui:SetCore("SendNotification", {
-        Title = "💎 PS99 Summit Suite",
-        Text = "Giao diện đã mở! Bấm nút 💎 để ẩn/hiện.",
-        Duration = 5
-    })
-end)
-
 --========================================================================
--- PHẦN DƯỚI: TẢI GAME DATA VÀ LOGIC CHẠY NGẦM (HOÀN TOÀN TÁCH BIỆT)
--- Đảm bảo không bao giờ làm đứng hoặc mất GUI
+-- HỆ THỐNG XỬ LÝ NGẦM CHUYÊN SÂU
 --========================================================================
 
 task.spawn(function()
@@ -623,41 +666,32 @@ task.spawn(function()
                 timestamp = DateTime.now():ToIsoDate()
             }
             if title and title ~= "" then embed.title = title end
-            local payload = {
-                username = "Diamond Mountain Monitor",
-                embeds = { embed }
-            }
-            if mention and mention ~= "" then payload.content = mention end
             req({
                 Url = STATE.Webhook,
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode(payload)
+                Body = HttpService:JSONEncode({
+                    username = "Diamond Mountain Monitor",
+                    content = mention or "",
+                    embeds = { embed }
+                })
             })
         end)
     end
 
-    -- Tải Library an toàn với pcall
+    -- Nạp modules PS99
     local Library, Client, Directory, Save, PetDirectory, Network
     pcall(function()
         Library = RS:WaitForChild("Library", 8)
         if Library then
             Client = Library:FindFirstChild("Client")
             Directory = Library:FindFirstChild("Directory")
-            if Client and Client:FindFirstChild("Save") then
-                Save = require(Client.Save)
-            end
-            if Directory and Directory:FindFirstChild("Pets") then
-                PetDirectory = require(Directory.Pets)
-            end
-            if Client and Client:FindFirstChild("Network") then
-                Network = require(Client.Network)
-            end
+            if Client and Client:FindFirstChild("Save") then Save = require(Client.Save) end
+            if Directory and Directory:FindFirstChild("Pets") then PetDirectory = require(Directory.Pets) end
+            if Client and Client:FindFirstChild("Network") then Network = require(Client.Network) end
         end
     end)
-    if not Network and RS:FindFirstChild("Network") then
-        Network = RS.Network
-    end
+    if not Network and RS:FindFirstChild("Network") then Network = RS.Network end
 
     local function formatNumber(n)
         n = tonumber(n) or 0
@@ -680,9 +714,7 @@ task.spawn(function()
 
     local function getDiamonds()
         local data
-        pcall(function()
-            if Save and Save.Get then data = Save.Get() end
-        end)
+        pcall(function() if Save and Save.Get then data = Save.Get() end end)
         if not data or not data.Inventory or not data.Inventory.Currency then return 0 end
         for _, curr in pairs(data.Inventory.Currency) do
             if curr.id == "Diamonds" then return tonumber(curr._am) or 0 end
@@ -692,39 +724,11 @@ task.spawn(function()
 
     STATE.StartingDiamonds = getDiamonds()
 
-    -- Lưu vị trí ban đầu làm bãi farm
     task.wait(1)
     local char = Player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp and not STATE.FarmCFrame then
         STATE.FarmCFrame = hrp.CFrame
-    end
-
-    -- Tìm Yeti
-    local function findYeti()
-        local Things = workspace:FindFirstChild("__THINGS")
-        if Things then
-            local Breakables = Things:FindFirstChild("Breakables")
-            if Breakables then
-                for _, b in pairs(Breakables:GetChildren()) do
-                    local lower = string.lower(b.Name)
-                    if string.find(lower, "yeti") or string.find(lower, "abominable") then
-                        local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
-                        if part then return b, part.CFrame end
-                    end
-                end
-            end
-        end
-        for _, obj in pairs(workspace:GetChildren()) do
-            if obj:IsA("Model") then
-                local lower = string.lower(obj.Name)
-                if string.find(lower, "yeti") or string.find(lower, "abominable") then
-                    local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-                    if part then return obj, part.CFrame end
-                end
-            end
-        end
-        return nil, nil
     end
 
     local function safeTeleport(cframe)
@@ -734,47 +738,136 @@ task.spawn(function()
         if h then h.CFrame = cframe + Vector3.new(0, 3, 0) end
     end
 
-    -- Vòng lặp Săn Yeti & Điều phối Teleport
+    -- TÌM VÀ NHẬN DIỆN YETI (QUÉT ĐA TẦNG: WORKSPACE + BREAKABLES + GUI)
+    local function checkYetiBoss()
+        -- 1. Quét Breakables (Bằng Name và GetAttributes)
+        local Things = workspace:FindFirstChild("__THINGS")
+        local Breakables = Things and Things:FindFirstChild("Breakables")
+        if Breakables then
+            for _, b in pairs(Breakables:GetChildren()) do
+                local name = string.lower(b.Name)
+                if string.find(name, "yeti") or string.find(name, "abominable") then
+                    local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
+                    if part then return b, part.CFrame end
+                end
+                for k, v in pairs(b:GetAttributes()) do
+                    local str = string.lower(tostring(v))
+                    if string.find(str, "yeti") or string.find(str, "abominable") then
+                        local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
+                        if part then return b, part.CFrame end
+                    end
+                end
+            end
+        end
+
+        -- 2. Quét trong Workspace Models
+        for _, desc in pairs(workspace:GetDescendants()) do
+            if (desc:IsA("Model") or desc:IsA("BasePart")) and not desc:IsDescendantOf(Player.Character) then
+                local l = string.lower(desc.Name)
+                if string.find(l, "yeti") or string.find(l, "abominable") then
+                    local cf = desc:IsA("BasePart") and desc.CFrame or (desc.PrimaryPart and desc.PrimaryPart.CFrame or desc:FindFirstChildWhichIsA("BasePart") and desc:FindFirstChildWhichIsA("BasePart").CFrame)
+                    if cf then return desc, cf end
+                end
+            end
+        end
+
+        -- 3. Quét Boss Health Bar trong PlayerGui
+        for _, g in pairs(Player.PlayerGui:GetDescendants()) do
+            if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
+                local t = string.lower(g.Text)
+                if string.find(t, "yeti") or string.find(t, "abominable") then
+                    -- Yeti đang sống trên server! Nếu đã lưu đấu trường thì trả về
+                    if STATE.YetiArenaCFrame then
+                        return "YetiFromGui", STATE.YetiArenaCFrame
+                    end
+                end
+            end
+        end
+
+        return nil, nil
+    end
+
+    -- TỰ ĐỘNG CLICK / TẤN CÔNG VÀO YETI
+    local function performAttackYeti(targetObj, targetCFrame)
+        -- 1. Gửi lệnh tấn công qua Network Remote
+        if Network and Network.Fire then
+            pcall(function()
+                if typeof(targetObj) == "Instance" then
+                    Network.Fire("Breakables_PlayerAttackBreakable", targetObj.Name, "1")
+                    Network.Fire("Breakables_PlayerAttackBreakable", targetObj.Name, {})
+                end
+            end)
+        end
+
+        -- 2. Hướng Camera thẳng vào Yeti
+        pcall(function()
+            if targetCFrame and Camera then
+                Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetCFrame.Position)
+            end
+        end)
+
+        -- 3. Click chuột / Tap cảm ứng vào giữa màn hình
+        pcall(function()
+            local vp = Camera.ViewportSize
+            local center = Vector2.new(vp.X / 2, vp.Y / 2)
+            if VirtualUser then
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton1(center)
+            end
+            if VirtualInputManager then
+                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                task.wait(0.02)
+                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+            end
+        end)
+    end
+
+    -- VÒNG LẶP ĐIỀU PHỐI YETI BOSS
     task.spawn(function()
         while true do
-            task.wait(0.5)
+            task.wait(0.4)
             if STATE.AutoYeti then
-                local yetiInst, yetiPos = findYeti()
-                if yetiInst and yetiPos then
+                local yetiObj, yetiPos = checkYetiBoss()
+
+                if yetiObj and yetiPos then
+                    STATE.YetiStatusText = "🔥 Đang Sống!"
                     if not STATE.IsFightingYeti then
                         STATE.IsFightingYeti = true
-                        STATE.CurrentAction = "⚔️ Đang tấn công Yeti Boss!"
-                        safeTeleport(yetiPos + Vector3.new(0, 2, 5))
+                        STATE.CurrentAction = "⚔️ Đang săn Yeti Boss!"
+                        -- Tự lưu vị trí này làm đấu trường nếu chưa có
+                        if not STATE.YetiArenaCFrame and typeof(yetiPos) == "CFrame" then
+                            STATE.YetiArenaCFrame = yetiPos
+                        end
+                        safeTeleport(yetiPos + Vector3.new(0, 2, 6))
                     end
+
                     if STATE.AutoClickYeti then
-                        pcall(function()
-                            if Network and Network.Fire then
-                                Network.Fire("Breakables_PlayerAttackBreakable", yetiInst.Name, "1")
-                            end
-                            if VirtualUser then
-                                VirtualUser:CaptureController()
-                                VirtualUser:ClickButton1(Vector2.new())
-                            end
-                        end)
+                        performAttackYeti(yetiObj, yetiPos)
                     end
                 else
+                    STATE.YetiStatusText = "Chưa hồi sinh"
                     if STATE.IsFightingYeti then
+                        -- Yeti vừa bị đánh bại!
                         STATE.IsFightingYeti = false
                         STATE.YetiKilledCount = STATE.YetiKilledCount + 1
                         STATE.CurrentAction = "🏆 Yeti đã bị hạ gục!"
+
                         if STATE.YetiCooldownAlert then
                             sendWebhook(
                                 "💥 ĐÃ HẠ GỤC YETI BOSS!",
-                                "Tài khoản **" .. Player.Name .. "** đã đánh bại Yeti!\n**Tổng số Yeti đã diệt:** `" .. STATE.YetiKilledCount .. " con`",
+                                "Tài khoản **" .. Player.Name .. "** đã tiêu diệt Yeti thành công!\n**Tổng số Yeti:** `" .. STATE.YetiKilledCount .. " con`",
                                 16766720
                             )
                         end
+
                         task.wait(1.5)
+
+                        -- ĐIỀU KIỆN TELEPORT SAU KHI YETI CHẾT
                         if STATE.AutoHatch then
                             local cavePos = STATE.CaveCFrames[STATE.SelectedCave]
                             if cavePos then
                                 safeTeleport(cavePos)
-                                STATE.CurrentAction = "🥚 Mở trứng tại Hang " .. STATE.SelectedCave
+                                STATE.CurrentAction = "🥚 Mở trứng Hang " .. STATE.SelectedCave
                             end
                         elseif STATE.AutoFarmMoney then
                             if STATE.FarmCFrame then
@@ -784,7 +877,7 @@ task.spawn(function()
                         end
                     else
                         if STATE.AutoHatch then
-                            STATE.CurrentAction = "🥚 Mở trứng tại Hang " .. STATE.SelectedCave
+                            STATE.CurrentAction = "🥚 Mở trứng Hang " .. STATE.SelectedCave
                         elseif STATE.AutoFarmMoney then
                             STATE.CurrentAction = "💰 Cày tiền tại Bãi Farm"
                         else
@@ -796,30 +889,105 @@ task.spawn(function()
         end
     end)
 
-    -- Vòng lặp Mở Trứng (Auto Hatch)
+    -- TÌM TÊN TRỨNG GẦN NHẤT
+    local function getAutoEggName()
+        if STATE.SelectedEggName and STATE.SelectedEggName ~= "Nearest" and STATE.SelectedEggName ~= "" then
+            return STATE.SelectedEggName
+        end
+
+        local Things = workspace:FindFirstChild("__THINGS")
+        local EggsFolder = Things and Things:FindFirstChild("Eggs")
+        local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+        if hrp and EggsFolder then
+            local nearest, minDist = nil, 70
+            for _, egg in pairs(EggsFolder:GetChildren()) do
+                local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart")))
+                if part then
+                    local dist = (part.Position - hrp.Position).Magnitude
+                    if dist < minDist then
+                        minDist = dist
+                        nearest = egg
+                    end
+                end
+            end
+            if nearest then return nearest.Name end
+        end
+
+        for _, obj in pairs(workspace:GetChildren()) do
+            if obj:IsA("Model") and string.find(string.lower(obj.Name), "egg") then
+                return obj.Name
+            end
+        end
+        return nil
+    end
+
+    -- CHẶN TRIỆT ĐỂ POP-UP KẾT QUẢ VÀ ANIMATION MỞ TRỨNG
+    local function suppressEggPopups()
+        pcall(function()
+            -- 1. Ẩn GUI EggOpening
+            local eggOpening = Player.PlayerGui:FindFirstChild("EggOpening")
+            if eggOpening then
+                eggOpening.Enabled = false
+                for _, el in pairs(eggOpening:GetDescendants()) do
+                    if el:IsA("GuiObject") then el.Visible = false end
+                end
+            end
+
+            -- 2. Ẩn tất cả các bảng thông báo pop-up nở trứng
+            for _, g in pairs(Player.PlayerGui:GetChildren()) do
+                if g:IsA("ScreenGui") and (string.find(string.lower(g.Name), "egg") or string.find(string.lower(g.Name), "hatch")) then
+                    g.Enabled = false
+                end
+            end
+
+            -- 3. Tự động bấm nút đóng nếu có pop-up hiện lên
+            for _, btn in pairs(Player.PlayerGui:GetDescendants()) do
+                if btn:IsA("TextButton") and (btn.Text == "OK" or btn.Text == "Continue" or btn.Name == "Close" or btn.Name == "Dismiss") then
+                    if btn.Visible then
+                        btn.MouseButton1Click:Fire()
+                    end
+                end
+            end
+
+            -- 4. Hook PlayEggAnimation
+            local ps = Player:FindFirstChild("PlayerScripts")
+            local gameScripts = ps and ps:FindFirstChild("Scripts") and ps.Scripts:FindFirstChild("Game")
+            if gameScripts then
+                local eggFrontend = gameScripts:FindFirstChild("Egg Opening Frontend")
+                if eggFrontend and getsenv then
+                    local env = getsenv(eggFrontend)
+                    if env then
+                        if env.PlayEggAnimation then env.PlayEggAnimation = function() return end end
+                        if env.ShowEggResults then env.ShowEggResults = function() return end end
+                    end
+                end
+            end
+        end)
+    end
+
+    -- VÒNG LẶP AUTO HATCH TRỨNG LIÊN TỤC (KHÔNG BỊ DỪNG)
     task.spawn(function()
         while true do
-            task.wait(0.3)
+            task.wait(0.25)
             if STATE.AutoHatch and not STATE.IsFightingYeti then
-                pcall(function()
-                    if STATE.SkipAnimation then
-                        local EggsFrontend = Player.PlayerScripts.Scripts.Game:FindFirstChild("Egg Opening Frontend")
-                        if EggsFrontend and getsenv then getsenv(EggsFrontend).PlayEggAnimation = function() return end end
-                        local eggGui = Player.PlayerGui:FindFirstChild("EggOpening")
-                        if eggGui then eggGui.Enabled = false end
-                    end
-                    if Network and Network.Invoke then
-                        Network.Invoke("Eggs_RequestPurchase", STATE.SelectedEggName, 1)
-                    end
-                end)
+                if STATE.SkipAnimation then
+                    suppressEggPopups()
+                end
+
+                local targetEgg = getAutoEggName()
+                if targetEgg and Network and Network.Invoke then
+                    pcall(function()
+                        Network.Invoke("Eggs_RequestPurchase", targetEgg, STATE.HatchAmount or 1)
+                    end)
+                end
             end
         end
     end)
 
-    -- Vòng lặp Phá Rương trong Hang
+    -- VÒNG LẶP PHÁ RƯƠNG TRONG HANG
     task.spawn(function()
         while true do
-            task.wait(0.5)
+            task.wait(0.4)
             if STATE.AutoCaveChests and not STATE.IsFightingYeti then
                 pcall(function()
                     local c = Player.Character
@@ -850,10 +1018,10 @@ task.spawn(function()
         end
     end)
 
-    -- Vòng lặp Farm Tiền (Đập Breakables)
+    -- VÒNG LẶP CÀY TIỀN TẠI BÃI FARM
     task.spawn(function()
         while true do
-            task.wait(0.5)
+            task.wait(0.4)
             if STATE.AutoFarmMoney and not STATE.AutoHatch and not STATE.IsFightingYeti then
                 pcall(function()
                     local c = Player.Character
@@ -861,7 +1029,7 @@ task.spawn(function()
                     local Things = workspace:FindFirstChild("__THINGS")
                     local Breakables = Things and Things:FindFirstChild("Breakables")
                     if h and Breakables and STATE.AutoHitBreakables then
-                        local nearest, minDist = nil, 100
+                        local nearest, minDist = nil, 110
                         for _, b in pairs(Breakables:GetChildren()) do
                             local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
                             if part then
@@ -881,7 +1049,7 @@ task.spawn(function()
         end
     end)
 
-    -- Hút Orbs & Lootbags
+    -- HÚT ORBS & LOOTBAGS
     task.spawn(function()
         while true do
             task.wait(0.4)
@@ -931,12 +1099,13 @@ task.spawn(function()
         end)
     end)
 
-    -- Cập nhật Dashboard mỗi giây
+    -- Vòng lặp cập nhật Dashboard
     task.spawn(function()
         while true do
             task.wait(1)
             pcall(function()
                 lblAction.Text = STATE.CurrentAction
+                lblYetiStatus.Text = STATE.YetiStatusText
                 lblYetiCount.Text = STATE.YetiKilledCount .. " con"
                 local curD = getDiamonds()
                 local diff = curD - STATE.StartingDiamonds
