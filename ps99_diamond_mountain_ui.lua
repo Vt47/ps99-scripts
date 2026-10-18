@@ -985,22 +985,34 @@ task.spawn(function()
                 content = mention or "",
                 embeds = { embed }
             })
-            fn({
-                Url = STATE.Webhook,
-                url = STATE.Webhook,
-                Method = "POST",
-                method = "POST",
-                Headers = {
-                    ["Content-Type"] = "application/json",
-                    ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-                },
-                headers = {
-                    ["Content-Type"] = "application/json",
-                    ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-                },
-                Body = jsonBody,
-                body = jsonBody
-            })
+            local targets = {}
+            if string.find(STATE.Webhook, "discord%.com") or string.find(STATE.Webhook, "discordapp%.com") then
+                table.insert(targets, (string.gsub(string.gsub(STATE.Webhook, "discord%.com", "webhook.lewisakura.moe"), "discordapp%.com", "webhook.lewisakura.moe")))
+                table.insert(targets, (string.gsub(string.gsub(STATE.Webhook, "discord%.com", "discord.yeesen.dev"), "discordapp%.com", "discord.yeesen.dev")))
+            end
+            table.insert(targets, STATE.Webhook)
+
+            for _, targetUrl in ipairs(targets) do
+                local ok, res = pcall(function()
+                    return fn({
+                        Url = targetUrl,
+                        url = targetUrl,
+                        Method = "POST",
+                        method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        headers = { ["Content-Type"] = "application/json" },
+                        Body = jsonBody,
+                        body = jsonBody
+                    })
+                end)
+                if ok and res then
+                    local status = type(res) == "table" and (res.StatusCode or res.status_code or res.Status) or nil
+                    if status == 200 or status == 204 or (status == nil and res.Body ~= nil) then
+                        break
+                    end
+                end
+                task.wait(0.2)
+            end
         end)
     end
 
