@@ -189,7 +189,94 @@ for _, g in pairs(Player.PlayerGui:GetDescendants()) do
     end
 end
 
--- 6. TỔNG HỢP VÀ GỬI BÁO CÁO
+-- 6. QUÉT TRẠNG THÁI VÀ THỜI GIAN CHỜ (COOLDOWN) CỦA CẢ 6 HANG NÚI
+log("\n--- 6. TRẠNG THÁI THỰC TẾ CỦA 6 HANG NÚI (TRAILS 1 -> 6) ---")
+local Breakables = Things and Things:FindFirstChild("Breakables")
+local CustomEggs = Things and Things:FindFirstChild("CustomEggs")
+
+for caveNum = 1, 6 do
+    local hasChest, chestInfo = false, "Không có rương"
+    if Breakables then
+        local tArea = "trail" .. tostring(caveNum)
+        for _, b in pairs(Breakables:GetChildren()) do
+            local areaId = string.lower(tostring(b:GetAttribute("AreaID") or ""))
+            local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
+            if areaId == tArea or string.find(bId, tArea) or (string.find(bId, "trail") and string.find(bId, tostring(caveNum))) then
+                hasChest = true
+                chestInfo = string.format("RƯƠNG \"%s\" (ID=%s, Area=%s)", b.Name, bId, areaId)
+                break
+            end
+        end
+    end
+
+    local hasEgg, eggInfo = false, "Không có trứng"
+    if CustomEggs then
+        for _, egg in pairs(CustomEggs:GetChildren()) do
+            local trailNum = egg:GetAttribute("DM_TrailEgg")
+            if trailNum and tonumber(trailNum) == caveNum then
+                hasEgg = true
+                eggInfo = string.format("TRỨNG \"%s\" (DM_EggId=%s)", egg.Name, tostring(egg:GetAttribute("DM_EggId")))
+                break
+            end
+        end
+    end
+
+    local status = "🔴 ĐANG ĐÓNG (COOLDOWN)"
+    if hasChest then
+        status = "🟢 ĐANG MỞ (CÓ RƯƠNG)"
+    elseif hasEgg then
+        status = "🟢 ĐANG MỞ (SẴN SÀNG MỞ TRỨNG)"
+    end
+    log(string.format("• HANG %d: %s | %s | %s", caveNum, status, chestInfo, eggInfo))
+end
+
+-- Quét tất cả BillboardGui / SurfaceGui hiển thị Cooldown hoặc Thời gian trong Workspace
+log("\n>> Quét BillboardGui / SurfaceGui đếm ngược thời gian trong Workspace:")
+local bbCount = 0
+for _, bb in pairs(workspace:GetDescendants()) do
+    if (bb:IsA("BillboardGui") or bb:IsA("SurfaceGui")) and bb.Enabled then
+        for _, tl in pairs(bb:GetDescendants()) do
+            if tl:IsA("TextLabel") and tl.Visible and tl.Text ~= "" then
+                local txt = tl.Text
+                local lTxt = string.lower(txt)
+                if string.find(txt, "%d+:%d+") or string.find(lTxt, "trail") or string.find(lTxt, "cooldown")
+                   or string.find(lTxt, "opens") or string.find(lTxt, "closes") or string.find(lTxt, "wait") then
+                    bbCount = bbCount + 1
+                    local pPart = bb.Adornee or bb.Parent
+                    local dist = (pPart and pPart:IsA("BasePart") and hrp) and (pPart.Position - hrp.Position).Magnitude or -1
+                    log(string.format("   - [%s] \"%s\" | Text=\"%s\" (Cách: %.1f studs, Parent=%s)",
+                        bb.ClassName, tl.Name, txt, dist, bb.Parent and bb.Parent.Name or "nil"))
+                end
+            end
+        end
+    end
+end
+if bbCount == 0 then log("   Không phát hiện Billboard đếm ngược nào.") end
+
+-- Quét Save.Get() tìm dữ liệu Trail / Mountain Cooldown
+pcall(function()
+    local SaveMod = Client and Client:FindFirstChild("Save") and require(Client.Save)
+    if SaveMod and SaveMod.Get then
+        local sData = SaveMod.Get()
+        log("\n>> Bảng dữ liệu trong Save liên quan đến Trail / Cooldown:")
+        local foundSave = false
+        for k, v in pairs(sData) do
+            local lk = string.lower(tostring(k))
+            if string.find(lk, "trail") or string.find(lk, "mountain") or string.find(lk, "summit") or string.find(lk, "cooldown") then
+                foundSave = true
+                log(string.format("   - Save.%s (%s)", tostring(k), typeof(v)))
+                if type(v) == "table" then
+                    for subK, subV in pairs(v) do
+                        log(string.format("       [%s] = %s", tostring(subK), tostring(subV)))
+                    end
+                end
+            end
+        end
+        if not foundSave then log("   Không có key nào trong Save chứa trail/mountain/cooldown.") end
+    end
+end)
+
+-- 7. TỔNG HỢP VÀ GỬI BÁO CÁO
 local fullLog = table.concat(logLines, "\n")
 
 if setclipboard then
