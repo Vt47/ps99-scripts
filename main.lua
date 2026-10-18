@@ -136,6 +136,7 @@ local STATE = {
     TotalHuge = 0,
     TotalTitanic = 0,
     TotalGargantuan = 0,
+    TotalHatchedEggs = 0,
     CurrentAction = "Sẵn sàng"
 }
 
@@ -177,7 +178,8 @@ local function saveConfig()
             AutoHitBreakables = STATE.AutoHitBreakables,
             ShowHatchPopup = STATE.ShowHatchPopup,
             SkipAnimation = STATE.SkipAnimation,
-            SelectedEggName = STATE.SelectedEggName
+            SelectedEggName = STATE.SelectedEggName,
+            TotalHatchedEggs = STATE.TotalHatchedEggs
         }
         writefile(CONFIG_FILE, HttpService:JSONEncode(data))
     end)
@@ -218,6 +220,7 @@ local function loadConfig()
         if data.ShowHatchPopup ~= nil then STATE.ShowHatchPopup = data.ShowHatchPopup end
         if data.SkipAnimation ~= nil then STATE.SkipAnimation = data.SkipAnimation end
         if data.SelectedEggName and data.SelectedEggName ~= "" then STATE.SelectedEggName = data.SelectedEggName end
+        if data.TotalHatchedEggs then STATE.TotalHatchedEggs = tonumber(data.TotalHatchedEggs) or 0 end
     end)
 end
 
@@ -315,7 +318,10 @@ local function getCaveEgg(caveNum)
     caveNum = caveNum or STATE.SelectedCave
     local Things = workspace:FindFirstChild("__THINGS")
     local CustomEggs = Things and Things:FindFirstChild("CustomEggs")
+    local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+
     if CustomEggs then
+        -- 1. Ưu tiên khớp theo attribute DM_TrailEgg
         for _, egg in pairs(CustomEggs:GetChildren()) do
             local trailNum = egg:GetAttribute("DM_TrailEgg")
             if trailNum and tonumber(trailNum) == tonumber(caveNum) then
@@ -327,6 +333,8 @@ local function getCaveEgg(caveNum)
                 end
             end
         end
+
+        -- 2. Khớp tên có chứa trailX hoặc caveX
         for _, egg in pairs(CustomEggs:GetChildren()) do
             local eName = string.lower(egg.Name)
             if string.find(eName, "trail" .. tostring(caveNum)) or string.find(eName, "cave" .. tostring(caveNum)) then
@@ -335,6 +343,26 @@ local function getCaveEgg(caveNum)
                 if part then
                     return egg, part.CFrame, eggId
                 end
+            end
+        end
+
+        -- 3. Nếu đang đứng trong hang / gần trứng (< 160 studs), lấy ngay quả trứng CustomEgg gần nhất
+        if hrp then
+            local nearestEgg, minDist = nil, 160
+            for _, egg in pairs(CustomEggs:GetChildren()) do
+                local part = getPartFromInstance(egg)
+                if part then
+                    local dist = (part.Position - hrp.Position).Magnitude
+                    if dist < minDist then
+                        minDist = dist
+                        nearestEgg = egg
+                    end
+                end
+            end
+            if nearestEgg then
+                local part = getPartFromInstance(nearestEgg)
+                local eggId = nearestEgg:GetAttribute("DM_EggId") or nearestEgg.Name
+                return nearestEgg, part.CFrame, eggId
             end
         end
     end
@@ -679,6 +707,7 @@ end
 local lblAction = createInfoCard(DashboardPage, "⚡ Hoạt Động:", STATE.CurrentAction)
 local lblYetiStatus = createInfoCard(DashboardPage, "👹 Tình Trạng Yeti:", STATE.YetiStatusText)
 local lblYetiCount = createInfoCard(DashboardPage, "🏆 Số Yeti Đã Diệt:", "0 con")
+local lblHatchedEggs = createInfoCard(DashboardPage, "🥚 Số Trứng Đã Mở:", "0 quả")
 local lblDiamonds = createInfoCard(DashboardPage, "💎 Kim Cương:", "Đang tải...")
 local lblDiffDiamonds = createInfoCard(DashboardPage, "📈 Cày Được:", "+0 (+0/h)")
 local lblUptime = createInfoCard(DashboardPage, "⏱️ Thời Gian Treo:", "00h 00m 00s")
@@ -1053,21 +1082,26 @@ task.spawn(function()
         pcall(function()
             for _, g in pairs(Player.PlayerGui:GetDescendants()) do
                 if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible and g.Text ~= "" then
-                    -- Bỏ qua hoàn toàn bảng quà tặng Free Gifts & Vé rút thưởng
                     local pName = g.Parent and g.Parent.Name or ""
-                    if pName ~= "Free" and pName ~= "ItemChances" and g.Name ~= "ClaimTimer" then
-                        local t = string.lower(g.Text)
+                    local t = string.lower(g.Text)
 
+                    -- Bỏ qua hoàn toàn bảng quà tặng Free Gifts, vé rút thưởng, menu bên lề, tab, quest
+                    if pName == "Free" or pName == "ItemChances" or g.Name == "ClaimTimer"
+                       or pName == "Content" or pName == "Contents" or pName == "BlogEntry"
+                       or pName == "TextHolder" or string.find(string.lower(g.Name), "quest")
+                       or string.find(string.lower(pName), "quest") then
+                        -- Bỏ qua
+                    else
                         -- A. Cooldown Yeti thật
-                        if string.find(t, "yeti") and (string.find(t, "returns in") or string.find(t, "again in") or string.find(t, "respawn in") or string.find(t, "next yeti")) then
+                        if string.find(t, "yeti") and (string.find(t, "returns in") or string.find(t, "again in") or string.find(t, "respawn in") or string.find(t, "next yeti") or string.find(t, "fight the yeti again")) then
                             isCooldown = true
                             cdString = string.match(g.Text, "%d+:%d+") or g.Text
                             break
                         end
 
-                        -- B. Nhận diện Yeti Boss Đang Giao Tranh (Parent == "Yeti" hoặc các biến thể)
-                        if (pName == "Yeti" or string.find(t, "golden yeti") or string.find(t, "shiny yeti") or string.find(t, "the yeti") or string.find(t, "team up to beat it"))
-                           and not string.find(t, "returns") and not string.find(t, "again in") and not string.find(t, "leaderboard") then
+                        -- B. Nhận diện Yeti Boss Đang Giao Tranh (CHỈ chấp nhận khi Parent là "Yeti" và có chữ damage/shiny/golden)
+                        if pName == "Yeti" and (string.find(t, "damage") or string.find(t, "golden yeti") or string.find(t, "shiny yeti") or string.find(t, "rainbow yeti"))
+                           and not string.find(t, "returns") and not string.find(t, "again in") and not string.find(t, "leaderboard") and not string.find(t, "fight the yeti") then
                             isBossActiveGui = true
                         end
                     end
@@ -1374,6 +1408,10 @@ task.spawn(function()
                     if not eggId then
                         eggId, eggObj = getRealEggName()
                     end
+                    if eggObj and not eggCF then
+                        local part = getPartFromInstance(eggObj)
+                        if part then eggCF = part.CFrame end
+                    end
                     
                     if eggCF then
                         if not STATE.CaveCFrames[STATE.SelectedCave] then
@@ -1384,8 +1422,8 @@ task.spawn(function()
                         end
                         local dist = (eggCF.Position - hrp.Position).Magnitude
                         
-                        -- Nếu đang đứng xa quả trứng > 9 studs, tự động teleport ngay trước mặt trứng
-                        if dist > 9 then
+                        -- Nếu đang đứng xa quả trứng > 8 studs, tự động teleport ngay trước mặt trứng
+                        if dist > 8 then
                             local standPos = eggCF.Position + Vector3.new(0, 1, 4)
                             safeTeleportTo(standPos, eggCF.Position)
                             task.wait(0.2)
@@ -1400,9 +1438,55 @@ task.spawn(function()
                     
                     if eggId and eggId ~= "Nearest" and eggId ~= "" and Network and Network.Invoke then
                         STATE.CurrentAction = "🥚 Mở trứng: " .. eggId .. " (H" .. STATE.SelectedCave .. ")"
-                        pcall(function()
-                            Network.Invoke("Eggs_RequestPurchase", eggId, STATE.HatchAmount or 1)
+                        
+                        local amt = STATE.HatchAmount or 1
+                        local hatchedThisCycle = false
+
+                        -- 1. Thử remote chuẩn Eggs_RequestPurchase với tên eggId
+                        local s1, r1 = pcall(function()
+                            return Network.Invoke("Eggs_RequestPurchase", eggId, amt)
                         end)
+                        if s1 and r1 ~= nil and r1 ~= false then hatchedThisCycle = true end
+
+                        -- 2. Thử remote với UID eggObj.Name nếu tên khác eggId
+                        if not hatchedThisCycle and eggObj and eggObj.Name ~= eggId then
+                            local s2, r2 = pcall(function()
+                                return Network.Invoke("Eggs_RequestPurchase", eggObj.Name, amt)
+                            end)
+                            if s2 and r2 ~= nil and r2 ~= false then hatchedThisCycle = true end
+                        end
+
+                        -- 3. Thử remote CustomEggs_RequestPurchase / CustomEggs_Purchase
+                        if not hatchedThisCycle then
+                            pcall(function()
+                                local r3 = Network.Invoke("CustomEggs_RequestPurchase", eggId, amt)
+                                if r3 ~= nil and r3 ~= false then hatchedThisCycle = true end
+                            end)
+                        end
+                        if not hatchedThisCycle and eggObj then
+                            pcall(function()
+                                local r4 = Network.Invoke("CustomEggs_RequestPurchase", eggObj.Name, amt)
+                                if r4 ~= nil and r4 ~= false then hatchedThisCycle = true end
+                            end)
+                        end
+
+                        -- 4. Kích hoạt ProximityPrompt nếu có
+                        if eggObj then
+                            for _, pp in pairs(eggObj:GetDescendants()) do
+                                if pp:IsA("ProximityPrompt") and pp.Enabled then
+                                    pcall(function()
+                                        if fireproximityprompt then
+                                            fireproximityprompt(pp)
+                                            hatchedThisCycle = true
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+
+                        -- Tăng số trứng đã mở và cập nhật giao diện
+                        STATE.TotalHatchedEggs = STATE.TotalHatchedEggs + amt
+                        
                         handleEggOpeningVisuals()
                     else
                         STATE.CurrentAction = "⏳ Chờ Hang " .. STATE.SelectedCave .. " mở cửa..."
@@ -1537,6 +1621,7 @@ task.spawn(function()
                 lblAction.Text = STATE.CurrentAction
                 lblYetiStatus.Text = STATE.YetiStatusText
                 lblYetiCount.Text = STATE.YetiKilledCount .. " con"
+                lblHatchedEggs.Text = formatNumber(STATE.TotalHatchedEggs) .. " quả"
                 local curD = getDiamonds()
                 local diff = curD - STATE.StartingDiamonds
                 local elapsed = math.max(1, os.time() - STATE.SessionStart)
