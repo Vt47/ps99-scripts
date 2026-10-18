@@ -120,59 +120,43 @@ for _, bb in pairs(workspace:GetDescendants()) do
                     timerFound = timerFound + 1
                     local pPart = bb.Adornee or bb.Parent
                     local dist = (pPart and pPart:IsA("BasePart") and hrp) and (pPart.Position - hrp.Position).Magnitude or -1
-                    log(string.format("• [World] \"%s\" = \"%s\" (Cách %.1f studs)", tl.Name, txt, dist))
+                    local pPath = bb.Parent and bb.Parent.Name or "None"
+                    if bb.Parent and bb.Parent.Parent then pPath = bb.Parent.Parent.Name .. "/" .. pPath end
+                    log(string.format("• [World] \"%s\" = \"%s\" (Cách %.1f studs, Nơi: %s)", tl.Name, txt, dist, pPath))
                 end
             end
         end
     end
 end
 
-for _, g in pairs(Player.PlayerGui:GetDescendants()) do
-    if g:IsA("TextLabel") and g.Visible and g.Text ~= "" then
-        local txt = g.Text
-        local lTxt = string.lower(txt)
-        if string.find(txt, "%d+:%d+") and (string.find(lTxt, "yeti") or string.find(lTxt, "trail") or string.find(lTxt, "cave") or string.find(lTxt, "cooldown") or string.find(lTxt, "again in") or string.find(lTxt, "returns in")) then
-            timerFound = timerFound + 1
-            log(string.format("• [Screen] \"%s\" = \"%s\"", g.Name, txt))
+-- 3. CHI TIẾT ATTRIBUTES VÀ TRẠNG THÁI CỦA CÁC QUẢ TRỨNG
+log("\n[3. CHI TIẾT QUẢ TRỨNG TRONG HANG]")
+if CustomEggs then
+    for _, egg in pairs(CustomEggs:GetChildren()) do
+        local attrs = {}
+        for aK, aV in pairs(egg:GetAttributes()) do
+            table.insert(attrs, aK .. "=" .. tostring(aV))
         end
+        local chList = {}
+        for _, ch in pairs(egg:GetChildren()) do
+            table.insert(chList, ch.Name)
+        end
+        log(string.format("• Trứng: %s | Attrs: [%s] | Con: [%s]", egg.Name, table.concat(attrs, ", "), table.concat(chList, ", ")))
     end
 end
-if timerFound == 0 then log("• Không phát hiện đồng hồ đếm ngược nào lúc này.") end
 
--- 3. REMOTES & MODULE MỞ TRỨNG
-log("\n[3. KIỂM TRA MODULE MỞ TRỨNG]")
-pcall(function()
-    local Lib = RS:FindFirstChild("Library")
-    local Client = Lib and Lib:FindFirstChild("Client")
-    if Client then
-        if Client:FindFirstChild("EggCmds") then
-            local EggCmds = require(Client.EggCmds)
-            local kList = {}
-            for k, _ in pairs(EggCmds) do table.insert(kList, tostring(k)) end
-            log("• EggCmds keys: " .. table.concat(kList, ", "))
-        else
-            log("• Không có Library.Client.EggCmds")
-        end
-        if Client:FindFirstChild("Network") then
-            local Net = require(Client.Network)
-            local kList = {}
-            for k, _ in pairs(Net) do table.insert(kList, tostring(k)) end
-            log("• Network keys: " .. table.concat(kList, ", "))
-        end
-    end
-end)
-
--- 4. KIỂM TRA HÀM MỞ TRỨNG NỘI BỘ (KHÔNG GÂY TREO THREAD)
-log("\n[4. KIỂM TRA HÀM MỞ TRỨNG CLIENT]")
+-- 4. KIỂM TRA TRẠNG THÁI KHÓA/MỞ TRỨNG TỪ EGGCMDS
+log("\n[4. KIỂM TRA EGGCMDS: KHÓA HAY MỞ?]")
 pcall(function()
     local Lib = RS:FindFirstChild("Library")
     local Client = Lib and Lib:FindFirstChild("Client")
     local EggCmds = Client and Client:FindFirstChild("EggCmds") and require(Client.EggCmds)
     if EggCmds then
-        for _, fnName in ipairs({"Purchase", "Open", "RequestPurchase", "Hatch"}) do
-            if EggCmds[fnName] then
-                log("• Có hàm EggCmds." .. fnName)
-            end
+        for _, eggName in ipairs({"Frostline Egg", "Diamond Summit Egg"}) do
+            local avail = EggCmds.IsEggAvailable and EggCmds.IsEggAvailable(eggName)
+            local unlocked = EggCmds.IsUnlocked and EggCmds.IsUnlocked(eggName)
+            local locked = EggCmds.IsEggLocked and EggCmds.IsEggLocked(eggName)
+            log(string.format("• %s: Available=%s, Unlocked=%s, Locked=%s", eggName, tostring(avail), tostring(unlocked), tostring(locked)))
         end
     end
 end)
