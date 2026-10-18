@@ -88,7 +88,7 @@ local STATE = {
     YetiKilledCount = 0,
     YetiCooldownAlert = true,
     IsFightingYeti = false,
-    YetiArenaCFrame = nil,
+    YetiArenaCFrame = CFrame.new(-30054.5, 756.8, 31135.3),
     YetiStatusText = "⏳ Đang quét...",
 
     -- [HANG NÚI & TRỨNG]
@@ -760,30 +760,52 @@ task.spawn(function()
         if h then h.CFrame = cframe + Vector3.new(0, 3, 0) end
     end
 
-    -- BỘ QUÉT TÌM YETI CHÍNH XÁC (KHẮC PHỤC 100% LỖI YOU CAN CLAIM AGAIN IN...)
+    -- BỘ QUÉT TÌM YETI CHÍNH XÁC (DỰA TRÊN DỮ LIỆU THỰC TẾ BREAKABLES & GUI YETI)
     local function checkYetiBoss()
+        -- 1. Kiểm tra Breakables thực tế trong workspace.__THINGS.Breakables TRƯỚC TIÊN
+        -- Dữ liệu scan chứng minh 100%: Yeti là một Breakable có BreakableID = "Yeti" và AreaID = "Yeti"
+        local Things = workspace:FindFirstChild("__THINGS")
+        local Breakables = Things and Things:FindFirstChild("Breakables")
+        if Breakables then
+            for _, b in pairs(Breakables:GetChildren()) do
+                local bId = tostring(b:GetAttribute("BreakableID") or "")
+                local areaId = tostring(b:GetAttribute("AreaID") or "")
+                if string.lower(bId) == "yeti" or string.lower(areaId) == "yeti" then
+                    local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
+                    if part then
+                        return b, part.CFrame, nil
+                    elseif STATE.YetiArenaCFrame then
+                        return b, STATE.YetiArenaCFrame, nil
+                    end
+                end
+            end
+        end
+
+        -- 2. Quét PlayerGui (Khi người chơi ở xa chưa stream Breakables đỉnh núi)
         local isCooldown = false
         local cdString = nil
         local isBossActiveGui = false
 
-        -- 1. Quét PlayerGui với điều kiện chuẩn xác
         pcall(function()
             for _, g in pairs(Player.PlayerGui:GetDescendants()) do
                 if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible and g.Text ~= "" then
-                    local t = string.lower(g.Text)
+                    -- Bỏ qua hoàn toàn bảng quà tặng Free Gifts & Vé rút thưởng
+                    local pName = g.Parent and g.Parent.Name or ""
+                    if pName ~= "Free" and pName ~= "ItemChances" and g.Name ~= "ClaimTimer" then
+                        local t = string.lower(g.Text)
 
-                    -- A. BẮT BUỘC PHẢI CHỨA TỪ "YETI" THÌ MỚI ĐƯỢC TÍNH LÀ COOLDOWN YETI
-                    -- Tránh bắt nhầm các dòng như "You can claim again in 18h37m"
-                    if string.find(t, "yeti") and (string.find(t, "returns in") or string.find(t, "again in") or string.find(t, "respawn in") or string.find(t, "next yeti")) then
-                        isCooldown = true
-                        cdString = string.match(g.Text, "%d+:%d+") or g.Text
-                        break
-                    end
+                        -- A. Cooldown Yeti thật
+                        if string.find(t, "yeti") and (string.find(t, "returns in") or string.find(t, "again in") or string.find(t, "respawn in") or string.find(t, "next yeti")) then
+                            isCooldown = true
+                            cdString = string.match(g.Text, "%d+:%d+") or g.Text
+                            break
+                        end
 
-                    -- B. Nhận diện Yeti Boss ĐANG GIAO TRANH thật (Ảnh 1: The Shiny Yeti, Team up to beat it, 32%, Your damage)
-                    if (string.find(t, "shiny yeti") or string.find(t, "golden yeti") or string.find(t, "abominable yeti") or string.find(t, "team up to beat it"))
-                       and not string.find(t, "returns in") and not string.find(t, "again in") then
-                        isBossActiveGui = true
+                        -- B. Nhận diện Yeti Boss Đang Giao Tranh (Parent == "Yeti" hoặc các biến thể)
+                        if (pName == "Yeti" or string.find(t, "golden yeti") or string.find(t, "shiny yeti") or string.find(t, "the yeti") or string.find(t, "team up to beat it"))
+                           and not string.find(t, "returns") and not string.find(t, "again in") and not string.find(t, "leaderboard") then
+                            isBossActiveGui = true
+                        end
                     end
                 end
             end
@@ -794,30 +816,9 @@ task.spawn(function()
             return nil, nil, cdString
         end
 
-        -- 2. Kiểm tra Breakables thực tế trong workspace.__THINGS.Breakables
-        local Things = workspace:FindFirstChild("__THINGS")
-        local Breakables = Things and Things:FindFirstChild("Breakables")
-        if Breakables then
-            for _, b in pairs(Breakables:GetChildren()) do
-                local isYetiBreakable = false
-                local bName = string.lower(b.Name)
-                if (string.find(bName, "yeti") or string.find(bName, "abominable")) and not string.find(bName, "pet") and not string.find(bName, "egg") and not string.find(bName, "sign") then
-                    isYetiBreakable = true
-                end
-                if not isYetiBreakable then
-                    for k, v in pairs(b:GetAttributes()) do
-                        local str = string.lower(tostring(v))
-                        if (string.find(str, "yeti") or string.find(str, "abominable")) and not string.find(str, "pet") and not string.find(str, "egg") then
-                            isYetiBreakable = true
-                            break
-                        end
-                    end
-                end
-                if isYetiBreakable then
-                    local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
-                    if part then return b, part.CFrame, nil end
-                end
-            end
+        -- Nếu trên màn hình có thanh máu giao tranh (The Golden Yeti / The Shiny Yeti / Parent Yeti):
+        if isBossActiveGui and STATE.YetiArenaCFrame then
+            return "YetiActiveFromGui", STATE.YetiArenaCFrame, nil
         end
 
         -- 3. Kiểm tra Model Boss trong Workspace (LOẠI BỎ Leaderboard, tượng, pet)
@@ -832,15 +833,10 @@ task.spawn(function()
                    and not string.find(l, "egg")
                    and not string.find(l, "pet")
                    and not Players:GetPlayerFromCharacter(obj) then
-                    local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                    local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
                     if part then return obj, part.CFrame, nil end
                 end
             end
-        end
-
-        -- 4. Nếu trên màn hình có thanh máu giao tranh (The Shiny Yeti / Team up to beat it):
-        if isBossActiveGui and STATE.YetiArenaCFrame then
-            return "YetiActiveFromGui", STATE.YetiArenaCFrame, nil
         end
 
         return nil, nil, nil
@@ -852,22 +848,36 @@ task.spawn(function()
 
         if Network and Network.Fire then
             pcall(function()
+                local targetUID = nil
                 if typeof(targetObj) == "Instance" then
-                    Network.Fire("Breakables_PlayerAttackBreakable", targetObj.Name, "1")
-                    Network.Fire("Breakables_PlayerAttackBreakable", targetObj.Name, {})
-                elseif STATE.YetiArenaCFrame then
+                    targetUID = targetObj.Name
+                else
                     local Things = workspace:FindFirstChild("__THINGS")
                     local Breakables = Things and Things:FindFirstChild("Breakables")
                     if Breakables then
                         for _, b in pairs(Breakables:GetChildren()) do
-                            local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
-                            if part and (part.Position - STATE.YetiArenaCFrame.Position).Magnitude < 90 then
-                                Network.Fire("Breakables_PlayerAttackBreakable", b.Name, "1")
-                                Network.Fire("Breakables_PlayerAttackBreakable", b.Name, {})
+                            local bId = tostring(b:GetAttribute("BreakableID") or "")
+                            local areaId = tostring(b:GetAttribute("AreaID") or "")
+                            if string.lower(bId) == "yeti" or string.lower(areaId) == "yeti" then
+                                targetUID = b.Name
                                 break
                             end
                         end
+                        if not targetUID and STATE.YetiArenaCFrame then
+                            for _, b in pairs(Breakables:GetChildren()) do
+                                local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
+                                if part and (part.Position - STATE.YetiArenaCFrame.Position).Magnitude < 90 then
+                                    targetUID = b.Name
+                                    break
+                                end
+                            end
+                        end
                     end
+                end
+
+                if targetUID then
+                    Network.Fire("Breakables_PlayerAttackBreakable", targetUID, "1")
+                    Network.Fire("Breakables_PlayerAttackBreakable", targetUID, {})
                 end
             end)
         end
@@ -951,30 +961,44 @@ task.spawn(function()
         end
 
         local Things = workspace:FindFirstChild("__THINGS")
-        local EggsFolder = Things and Things:FindFirstChild("Eggs")
+        local eggContainers = {}
+        if Things then
+            if Things:FindFirstChild("Eggs") then table.insert(eggContainers, Things.Eggs) end
+            if Things:FindFirstChild("CustomEggs") then table.insert(eggContainers, Things.CustomEggs) end
+            if Things:FindFirstChild("EggStands") then table.insert(eggContainers, Things.EggStands) end
+        end
+
         local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-        if hrp and EggsFolder then
+        if hrp then
             local nearest, minDist = nil, 90
-            for _, egg in pairs(EggsFolder:GetChildren()) do
-                local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart")))
-                if part then
-                    local dist = (part.Position - hrp.Position).Magnitude
-                    if dist < minDist then
-                        minDist = dist
-                        nearest = egg
+            for _, folder in ipairs(eggContainers) do
+                for _, egg in pairs(folder:GetChildren()) do
+                    local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart", true)))
+                    if part then
+                        local dist = (part.Position - hrp.Position).Magnitude
+                        if dist < minDist then
+                            minDist = dist
+                            nearest = egg
+                        end
                     end
                 end
             end
             if nearest then return nearest.Name end
-        end
 
-        for _, obj in pairs(workspace:GetChildren()) do
-            if obj:IsA("Model") and string.find(string.lower(obj.Name), "egg") then
-                local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-                if part and hrp and (part.Position - hrp.Position).Magnitude < 90 then
-                    return obj.Name
+            -- Quét các model/part có chữ Egg trong bán kính 90 studs
+            for _, obj in pairs(workspace:GetDescendants()) do
+                if (obj:IsA("Model") or obj:IsA("BasePart")) and string.find(string.lower(obj.Name), "egg") and not string.find(string.lower(obj.Name), "animation") then
+                    local part = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)))
+                    if part and hrp then
+                        local dist = (part.Position - hrp.Position).Magnitude
+                        if dist < minDist then
+                            minDist = dist
+                            nearest = obj
+                        end
+                    end
                 end
             end
+            if nearest then return nearest.Name end
         end
         return nil
     end

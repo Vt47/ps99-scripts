@@ -63,23 +63,79 @@ else
     log("Không tìm thấy workspace.__THINGS.Breakables")
 end
 
--- 3. QUÉT TRỨNG (EGGS)
-log("\n--- 3. DANH SÁCH TRỨNG GẦN BẠN ---")
-local EggsFolder = Things and Things:FindFirstChild("Eggs")
-local eggCount = 0
-if EggsFolder then
-    for _, egg in pairs(EggsFolder:GetChildren()) do
-        local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart")))
-        local dist = (part and hrp) and (part.Position - hrp.Position).Magnitude or 9999
-        if dist < 150 then
-            eggCount = eggCount + 1
-            log(string.format("• Trứng: \"%s\" (Cách: %.1f studs)", egg.Name, dist))
+-- 3. QUÉT TRỨNG (EGGS) VÀ CÁC FOLDER TRONG __THINGS
+log("\n--- 3. THƯ MỤC TRONG __THINGS & DANH SÁCH TRỨNG ---")
+if Things then
+    local tFolders = {}
+    for _, ch in pairs(Things:GetChildren()) do
+        table.insert(tFolders, ch.Name)
+    end
+    log("• Folders trong __THINGS: " .. table.concat(tFolders, ", "))
+end
+
+local eggFoundTotal = 0
+-- Quét các folder trứng có thể có trong __THINGS
+local possibleEggFolders = { "Eggs", "CustomEggs", "EggStands", "Instances" }
+for _, fName in ipairs(possibleEggFolders) do
+    local f = Things and Things:FindFirstChild(fName)
+    if f then
+        for _, egg in pairs(f:GetChildren()) do
+            local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart", true)))
+            local dist = (part and hrp) and (part.Position - hrp.Position).Magnitude or 9999
+            if dist < 180 then
+                eggFoundTotal = eggFoundTotal + 1
+                log(string.format("• Trứng trong [%s]: \"%s\" (Cách: %.1f studs)", fName, egg.Name, dist))
+                for k, v in pairs(egg:GetAttributes()) do
+                    log(string.format("     %s = %s", tostring(k), tostring(v)))
+                end
+            end
         end
     end
-    log(string.format("Tổng cộng: %d quả trứng gần bạn.", eggCount))
-else
-    log("Không tìm thấy workspace.__THINGS.Eggs")
 end
+
+-- Quét toàn bộ Workspace tìm Model hoặc Part liên quan đến Trứng / Chest / Trail trong 150 studs
+for _, obj in pairs(workspace:GetDescendants()) do
+    if (obj:IsA("Model") or obj:IsA("BasePart")) and hrp then
+        local lName = string.lower(obj.Name)
+        if (string.find(lName, "egg") or string.find(lName, "trail") or string.find(lName, "summit")) and not string.find(lName, "anim") then
+            local part = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)))
+            local dist = part and (part.Position - hrp.Position).Magnitude or 9999
+            if dist < 100 then
+                log(string.format("• Workspace Object: \"%s\" (Class: %s, Cách: %.1f studs, Parent: %s)", obj.Name, obj.ClassName, dist, obj.Parent and obj.Parent.Name or "nil"))
+            end
+        end
+    end
+end
+
+-- Quét ProximityPrompts gần bạn (để biết nút bấm tương tác mở trứng / hang)
+for _, pp in pairs(workspace:GetDescendants()) do
+    if pp:IsA("ProximityPrompt") and pp.Parent and hrp then
+        local pPart = pp.Parent:IsA("BasePart") and pp.Parent or (pp.Parent:IsA("Model") and (pp.Parent.PrimaryPart or pp.Parent:FindFirstChildWhichIsA("BasePart", true)))
+        local dist = pPart and (pPart.Position - hrp.Position).Magnitude or 9999
+        if dist < 80 then
+            log(string.format("• Nút bấm ProximityPrompt: Action=\"%s\", Object=\"%s\" (Cách: %.1f studs, Parent: %s)", pp.ActionText, pp.ObjectText, dist, pp.Parent.Name))
+        end
+    end
+end
+
+-- Quét Directory.Eggs trong ReplicatedStorage nếu có
+pcall(function()
+    local Lib = RS:FindFirstChild("Library")
+    local Dir = Lib and Lib:FindFirstChild("Directory")
+    if Dir and Dir:FindFirstChild("Eggs") then
+        local EggModule = require(Dir.Eggs)
+        log("\n--- 4. TÊN CÁC TRỨNG ĐẶC BIỆT TRONG DIRECTORY ---")
+        local count = 0
+        for eggId, _ in pairs(EggModule) do
+            local s = string.lower(tostring(eggId))
+            if string.find(s, "diamond") or string.find(s, "mountain") or string.find(s, "trail") or string.find(s, "cave") or string.find(s, "yeti") or string.find(s, "summit") then
+                count = count + 1
+                log(string.format("• Event Egg ID: \"%s\"", tostring(eggId)))
+            end
+        end
+        if count == 0 then log("Không có egg event nào chứa từ khóa diamond/mountain/trail/cave.") end
+    end
+end)
 
 local fullLog = table.concat(logLines, "\n")
 
