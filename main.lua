@@ -140,6 +140,90 @@ local STATE = {
 }
 
 --========================================================================
+-- HỆ THỐNG LƯU VÀ TỰ ĐỘNG TẢI CẤU HÌNH (AUTO-SAVE / AUTO-LOAD CONFIG)
+--========================================================================
+
+local CONFIG_FILE = "PS99_Summit_Config.json"
+
+local function cframeToTable(cf)
+    if not cf or typeof(cf) ~= "CFrame" then return nil end
+    return { cf:GetComponents() }
+end
+
+local function tableToCFrame(tbl)
+    if not tbl or type(tbl) ~= "table" or #tbl < 12 then return nil end
+    return CFrame.new(unpack(tbl))
+end
+
+local function saveConfig()
+    pcall(function()
+        if not writefile then return end
+        local caveTbl = {}
+        for i = 1, 6 do
+            if STATE.CaveCFrames[i] then
+                caveTbl[tostring(i)] = cframeToTable(STATE.CaveCFrames[i])
+            end
+        end
+        local data = {
+            SelectedCave = STATE.SelectedCave,
+            FarmCFrame = cframeToTable(STATE.FarmCFrame),
+            YetiArenaCFrame = cframeToTable(STATE.YetiArenaCFrame),
+            CaveCFrames = caveTbl,
+            AutoYeti = STATE.AutoYeti,
+            AutoClickYeti = STATE.AutoClickYeti,
+            AutoCaveChests = STATE.AutoCaveChests,
+            AutoHatch = STATE.AutoHatch,
+            AutoFarmMoney = STATE.AutoFarmMoney,
+            AutoHitBreakables = STATE.AutoHitBreakables,
+            ShowHatchPopup = STATE.ShowHatchPopup,
+            SkipAnimation = STATE.SkipAnimation,
+            SelectedEggName = STATE.SelectedEggName
+        }
+        writefile(CONFIG_FILE, HttpService:JSONEncode(data))
+    end)
+end
+
+local function loadConfig()
+    pcall(function()
+        if not readfile or not isfile or not isfile(CONFIG_FILE) then return end
+        local raw = readfile(CONFIG_FILE)
+        if not raw or raw == "" then return end
+        local data = HttpService:JSONDecode(raw)
+        if not data or type(data) ~= "table" then return end
+        
+        if data.SelectedCave then STATE.SelectedCave = tonumber(data.SelectedCave) or STATE.SelectedCave end
+        if data.FarmCFrame then
+            local cf = tableToCFrame(data.FarmCFrame)
+            if cf then STATE.FarmCFrame = cf end
+        end
+        if data.YetiArenaCFrame then
+            local cf = tableToCFrame(data.YetiArenaCFrame)
+            if cf then STATE.YetiArenaCFrame = cf end
+        end
+        if data.CaveCFrames and type(data.CaveCFrames) == "table" then
+            for i = 1, 6 do
+                local cfData = data.CaveCFrames[tostring(i)]
+                if cfData then
+                    local cf = tableToCFrame(cfData)
+                    if cf then STATE.CaveCFrames[i] = cf end
+                end
+            end
+        end
+        if data.AutoYeti ~= nil then STATE.AutoYeti = data.AutoYeti end
+        if data.AutoClickYeti ~= nil then STATE.AutoClickYeti = data.AutoClickYeti end
+        if data.AutoCaveChests ~= nil then STATE.AutoCaveChests = data.AutoCaveChests end
+        if data.AutoHatch ~= nil then STATE.AutoHatch = data.AutoHatch end
+        if data.AutoFarmMoney ~= nil then STATE.AutoFarmMoney = data.AutoFarmMoney end
+        if data.AutoHitBreakables ~= nil then STATE.AutoHitBreakables = data.AutoHitBreakables end
+        if data.ShowHatchPopup ~= nil then STATE.ShowHatchPopup = data.ShowHatchPopup end
+        if data.SkipAnimation ~= nil then STATE.SkipAnimation = data.SkipAnimation end
+        if data.SelectedEggName and data.SelectedEggName ~= "" then STATE.SelectedEggName = data.SelectedEggName end
+    end)
+end
+
+loadConfig()
+
+--========================================================================
 -- CÁC HÀM TIỆN ÍCH TỌA ĐỘ, RƯƠNG & TRỨNG HANG NÚI
 --========================================================================
 
@@ -533,6 +617,7 @@ local function createToggle(parent, title, defaultVal, callback)
         ToggleBtn.BackgroundColor3 = isToggled and Color3.fromRGB(40, 180, 90) or Color3.fromRGB(70, 75, 90)
         ToggleBtn.Text = isToggled and "BẬT" or "TẮT"
         callback(isToggled)
+        saveConfig()
     end)
     return Frame
 end
@@ -609,6 +694,7 @@ createActionButton(YetiPage, "📍 Lưu Vị Trí Đấu Trường Yeti (Đứng
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp then
         STATE.YetiArenaCFrame = hrp.CFrame
+        saveConfig()
         pcall(function()
             StarterGui:SetCore("SendNotification", {
                 Title = "📍 Lưu Đấu Trường Yeti",
@@ -750,6 +836,7 @@ for i = 1, 6 do
             local chestObj, chestCF = getCaveChest(i)
             if chestCF then STATE.CaveCFrames[i] = chestCF end
         end
+        saveConfig()
     end)
     table.insert(caveButtons, btn)
 end
@@ -759,6 +846,7 @@ createActionButton(TrailsPage, "📍 Lưu Vị Trí Hang Đang Đứng Cho Hang 
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp then
         STATE.CaveCFrames[STATE.SelectedCave] = hrp.CFrame
+        saveConfig()
         pcall(function()
             StarterGui:SetCore("SendNotification", {
                 Title = "📍 Lưu Tọa Độ",
@@ -813,6 +901,7 @@ createActionButton(FarmPage, "📍 Lưu Vị Trí Đang Đứng Làm Bãi Farm",
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp then
         STATE.FarmCFrame = hrp.CFrame
+        saveConfig()
         pcall(function()
             StarterGui:SetCore("SendNotification", {
                 Title = "📍 Lưu Bãi Farm",
@@ -931,6 +1020,7 @@ task.spawn(function()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp and not STATE.FarmCFrame then
         STATE.FarmCFrame = hrp.CFrame
+        saveConfig()
     end
 
 
@@ -1254,7 +1344,12 @@ task.spawn(function()
                 end
                 
                 if chestObj and chestCF and hrp then
-                    STATE.CaveCFrames[STATE.SelectedCave] = chestCF
+                    if not STATE.CaveCFrames[STATE.SelectedCave] then
+                        STATE.CaveCFrames[STATE.SelectedCave] = chestCF
+                        saveConfig()
+                    else
+                        STATE.CaveCFrames[STATE.SelectedCave] = chestCF
+                    end
                     local dist = (chestCF.Position - hrp.Position).Magnitude
                     
                     -- Nếu đang đứng ngoài hang hoặc cách rương > 14 studs, tự động teleport vào sát rương
@@ -1281,7 +1376,12 @@ task.spawn(function()
                     end
                     
                     if eggCF then
-                        STATE.CaveCFrames[STATE.SelectedCave] = eggCF
+                        if not STATE.CaveCFrames[STATE.SelectedCave] then
+                            STATE.CaveCFrames[STATE.SelectedCave] = eggCF
+                            saveConfig()
+                        else
+                            STATE.CaveCFrames[STATE.SelectedCave] = eggCF
+                        end
                         local dist = (eggCF.Position - hrp.Position).Magnitude
                         
                         -- Nếu đang đứng xa quả trứng > 9 studs, tự động teleport ngay trước mặt trứng
