@@ -307,77 +307,109 @@ local getCaveChest = nil
 local findAnyCaveChest = nil
 local updateCaveButtonsUI = function() end
 
--- Tìm CFrame và đối tượng Rương của Hang (Trail 1-6)
+-- Tìm CFrame và đối tượng Rương của Hang (Trail 1-6) - Ưu tiên rương gần nhất trong hang
 getCaveChest = function(caveNum)
     caveNum = tonumber(caveNum) or STATE.SelectedCave
     local targetArea = "trail" .. tostring(caveNum)
     local Things = workspace:FindFirstChild("__THINGS")
     local Breakables = Things and Things:FindFirstChild("Breakables")
-    if Breakables then
-        -- 1. Ưu tiên khớp chính xác AreaID hoặc ParentID với trailX
-        for _, b in pairs(Breakables:GetChildren()) do
-            local areaId = string.lower(tostring(b:GetAttribute("AreaID") or ""))
-            local parentId = string.lower(tostring(b:GetAttribute("ParentID") or ""))
-            local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
-            local bClass = string.lower(tostring(b:GetAttribute("BreakableClass") or ""))
-            
-            local matchArea = (areaId == targetArea or parentId == targetArea 
-                or string.find(areaId, targetArea) or string.find(parentId, targetArea)
-                or string.find(areaId, "trail " .. tostring(caveNum)) or string.find(parentId, "trail " .. tostring(caveNum)))
-            local isChest = (bClass == "chest" or string.find(bId, "chest") or string.find(string.lower(b.Name), "chest"))
-            
-            if matchArea and (isChest or bId ~= "yeti") then
-                local part = getPartFromInstance(b)
-                if part then
-                    return b, part.CFrame
-                end
-            end
-        end
+    if not Breakables then return nil, nil end
+
+    local char = Player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local pPos = hrp and hrp.Position or Vector3.new(0, 0, 0)
+
+    local bestChest, bestCF = nil, nil
+    local minDistance = math.huge
+
+    -- 1. Ưu tiên khớp chính xác AreaID hoặc ParentID với trailX
+    for _, b in pairs(Breakables:GetChildren()) do
+        local areaId = string.lower(tostring(b:GetAttribute("AreaID") or ""))
+        local parentId = string.lower(tostring(b:GetAttribute("ParentID") or ""))
+        local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
+        local bClass = string.lower(tostring(b:GetAttribute("BreakableClass") or ""))
         
-        -- 2. Khớp BreakableID chứa trail và caveNum (e.g. trailchest5, diamondmountaintrailchest)
-        for _, b in pairs(Breakables:GetChildren()) do
-            local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
-            local areaId = string.lower(tostring(b:GetAttribute("AreaID") or ""))
-            if string.find(bId, "trail") and (string.find(bId, tostring(caveNum)) or string.find(areaId, tostring(caveNum)) or string.find(areaId, "trail " .. tostring(caveNum))) then
-                local part = getPartFromInstance(b)
-                if part then
-                    return b, part.CFrame
+        local matchArea = (areaId == targetArea or parentId == targetArea 
+            or string.find(areaId, targetArea) or string.find(parentId, targetArea)
+            or string.find(areaId, "trail " .. tostring(caveNum)) or string.find(parentId, "trail " .. tostring(caveNum)))
+        local isChest = (bClass == "chest" or string.find(bId, "chest") or string.find(string.lower(b.Name), "chest"))
+        
+        if matchArea and (isChest or bId ~= "yeti") then
+            local part = getPartFromInstance(b)
+            if part then
+                local d = (part.Position - pPos).Magnitude
+                if d < minDistance then
+                    minDistance = d
+                    bestChest = b
+                    bestCF = part.CFrame
                 end
             end
         end
+    end
+    if bestChest and bestCF then return bestChest, bestCF end
 
-        -- 3. Khớp theo vị trí gần Trứng của Hang đó (mỗi quả trứng có DM_TrailEgg = caveNum)
-        if getCaveEgg then
-            local eggObj, eggCF = getCaveEgg(caveNum)
-            if eggCF then
-                for _, b in pairs(Breakables:GetChildren()) do
-                    local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
-                    local bClass = string.lower(tostring(b:GetAttribute("BreakableClass") or ""))
-                    if string.find(bId, "trailchest") or string.find(bId, "chest") or bClass == "chest" then
-                        local part = getPartFromInstance(b)
-                        if part and (part.Position - eggCF.Position).Magnitude < 55 then
-                            return b, part.CFrame
-                        end
-                    end
+    -- 2. Khớp BreakableID chứa trail và caveNum (e.g. trailchest5, diamondmountaintrailchest)
+    for _, b in pairs(Breakables:GetChildren()) do
+        local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
+        local areaId = string.lower(tostring(b:GetAttribute("AreaID") or ""))
+        if string.find(bId, "trail") and (string.find(bId, tostring(caveNum)) or string.find(areaId, tostring(caveNum)) or string.find(areaId, "trail " .. tostring(caveNum))) then
+            local part = getPartFromInstance(b)
+            if part then
+                local d = (part.Position - pPos).Magnitude
+                if d < minDistance then
+                    minDistance = d
+                    bestChest = b
+                    bestCF = part.CFrame
                 end
             end
         end
+    end
+    if bestChest and bestCF then return bestChest, bestCF end
 
-        -- 4. Khớp theo tọa độ hang đã lưu trong STATE.CaveCFrames
-        local refCF = STATE.CaveCFrames[caveNum]
-        if refCF then
+    -- 3. Khớp theo vị trí gần Trứng của Hang đó (mỗi quả trứng có DM_TrailEgg = caveNum)
+    if getCaveEgg then
+        local eggObj, eggCF = getCaveEgg(caveNum)
+        if eggCF then
             for _, b in pairs(Breakables:GetChildren()) do
                 local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
                 local bClass = string.lower(tostring(b:GetAttribute("BreakableClass") or ""))
                 if string.find(bId, "trailchest") or string.find(bId, "chest") or bClass == "chest" then
                     local part = getPartFromInstance(b)
-                    if part and (part.Position - refCF.Position).Magnitude < 55 then
-                        return b, part.CFrame
+                    if part and (part.Position - eggCF.Position).Magnitude < 55 then
+                        local d = (part.Position - pPos).Magnitude
+                        if d < minDistance then
+                            minDistance = d
+                            bestChest = b
+                            bestCF = part.CFrame
+                        end
                     end
                 end
             end
         end
     end
+    if bestChest and bestCF then return bestChest, bestCF end
+
+    -- 4. Khớp theo tọa độ hang đã lưu trong STATE.CaveCFrames
+    local refCF = STATE.CaveCFrames[caveNum]
+    if refCF then
+        for _, b in pairs(Breakables:GetChildren()) do
+            local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
+            local bClass = string.lower(tostring(b:GetAttribute("BreakableClass") or ""))
+            if string.find(bId, "trailchest") or string.find(bId, "chest") or bClass == "chest" then
+                local part = getPartFromInstance(b)
+                if part and (part.Position - refCF.Position).Magnitude < 55 then
+                    local d = (part.Position - pPos).Magnitude
+                    if d < minDistance then
+                        minDistance = d
+                        bestChest = b
+                        bestCF = part.CFrame
+                    end
+                end
+            end
+        end
+    end
+    if bestChest and bestCF then return bestChest, bestCF end
+
     return nil, nil
 end
 
@@ -1595,25 +1627,20 @@ task.spawn(function()
                             if STATE.CaveHatchActive and STATE.CaveHatchEggCF then
                                 safeTeleport(STATE.CaveHatchEggCF)
                                 STATE.CurrentAction = "🚀 Quay lại tiếp tục mở trứng Hang " .. STATE.CaveHatchCaveNum
-                            elseif STATE.AutoCaveChests then
-                                local foundCave, fObj, fCF = findAnyCaveChest(STATE.SelectedCave)
-                                if foundCave and fCF then
-                                    safeTeleport(fCF)
-                                    STATE.SelectedCave = foundCave
-                                    updateCaveButtonsUI(foundCave)
-                                    STATE.CurrentAction = "🚀 Quay lại phá Rương Hang " .. foundCave
-                                elseif STATE.FarmCFrame then
-                                    safeTeleport(STATE.FarmCFrame)
-                                    STATE.CurrentAction = "⏳ Đã phá hết rương. Về bãi farm tiền..."
-                                end
-                            elseif STATE.AutoHatch then
-                                local isOpen, phase, obj, cf = isCaveOpen(STATE.SelectedCave)
-                                if isOpen and cf then
-                                    safeTeleport(cf)
-                                    STATE.CurrentAction = "🚀 Quay lại Hang " .. STATE.SelectedCave
-                                elseif STATE.FarmCFrame then
-                                    safeTeleport(STATE.FarmCFrame)
-                                    STATE.CurrentAction = "⏳ Hang " .. STATE.SelectedCave .. " chưa mở / đang cooldown. Về bãi farm tiền..."
+                            elseif STATE.AutoCaveChests or STATE.AutoHatch then
+                                local cObj, cCF = getCaveChest(STATE.SelectedCave)
+                                if cObj and cCF and STATE.AutoCaveChests then
+                                    safeTeleport(cCF)
+                                    STATE.CurrentAction = "🚀 Quay lại phá Rương Hang " .. STATE.SelectedCave
+                                else
+                                    local isOpen, phase, obj, cf = isCaveOpen(STATE.SelectedCave)
+                                    if isOpen and cf then
+                                        safeTeleport(cf)
+                                        STATE.CurrentAction = "🚀 Quay lại Hang " .. STATE.SelectedCave
+                                    elseif STATE.FarmCFrame then
+                                        safeTeleport(STATE.FarmCFrame)
+                                        STATE.CurrentAction = "⏳ Hang " .. STATE.SelectedCave .. " chưa mở / đang cooldown. Về bãi farm tiền..."
+                                    end
                                 end
                             elseif STATE.AutoFarmMoney then
                                 if STATE.FarmCFrame then
@@ -1953,39 +1980,29 @@ task.spawn(function()
                     end
 
                 -- ========================================================
-                -- CHẾ ĐỘ 2: ĐIỀU PHỐI HANG & RƯƠNG THÔNG THƯỜNG (MULTI-CAVE H1-H6)
+                -- CHẾ ĐỘ 2: ĐIỀU PHỐI HANG & RƯƠNG THÔNG THƯỜNG (TẬP TRUNG HANG ĐÃ CHỌN)
                 -- ========================================================
                 elseif (STATE.AutoCaveChests or STATE.AutoHatch) and hrp then
                     local targetCave = STATE.SelectedCave
                     local chestObj, chestCF = nil, nil
 
                     if STATE.AutoCaveChests then
-                        local foundCave, fObj, fCF = findAnyCaveChest(STATE.SelectedCave)
-                        if foundCave and fObj and fCF then
-                            targetCave = foundCave
-                            chestObj = fObj
-                            chestCF = fCF
-                            if targetCave ~= STATE.SelectedCave then
-                                STATE.SelectedCave = targetCave
-                                updateCaveButtonsUI(targetCave)
-                            end
-                        end
-                    else
-                        local cObj, cCF = getCaveChest(STATE.SelectedCave)
-                        if cObj and cCF then
+                        local cObj, cCF = getCaveChest(targetCave)
+                        if cObj and cCF and cObj.Parent ~= nil then
                             chestObj = cObj
                             chestCF = cCF
                         end
                     end
 
-                    -- TRƯỜNG HỢP 2A: PHÁT HIỆN RƯƠNG CẦN PHÁ (Tự động di chuyển tới rương và click phá rương)
+                    -- TRƯỜNG HỢP 2A: PHÁT HIỆN RƯƠNG CẦN PHÁ TRONG HANG ĐÃ CHỌN
                     if chestObj and chestCF then
                         STATE.CaveCFrames[targetCave] = chestCF
-                        STATE.CurrentChestObj = chestObj
-                        STATE.CurrentChestCF = chestCF
 
+                        local isNewChest = (STATE.CurrentChestObj == nil or STATE.CurrentChestObj ~= chestObj)
                         local dist = (chestCF.Position - hrp.Position).Magnitude
-                        if dist > 8 then
+
+                        -- Nếu là rương mới (ví dụ vừa phá xong rương 1 chuyển sang rương tiếp theo) hoặc khoảng cách > 6: Teleport ngay trước mặt rương
+                        if isNewChest or dist > 6 then
                             local dir = hrp.Position - chestCF.Position
                             local flatDir = Vector3.new(dir.X, 0, dir.Z)
                             if flatDir.Magnitude < 1 then flatDir = Vector3.new(0, 0, 5) end
@@ -1994,28 +2011,30 @@ task.spawn(function()
                             task.wait(0.15)
                         end
 
+                        STATE.CurrentChestObj = chestObj
+                        STATE.CurrentChestCF = chestCF
                         STATE.CurrentAction = "📦 Đang phá Rương Hang " .. targetCave .. " (UID: " .. chestObj.Name .. ")"
                         performAttackChest(chestObj, chestCF)
 
-                    -- TRƯỜNG HỢP 2B: ĐÃ PHÁ HẾT RƯƠNG & BẬT AUTO HATCH TRỨNG -> KHỞI ĐỘNG PHIÊN MỞ TRỨNG LIÊN TỤC
+                    -- TRƯỜNG HỢP 2B: ĐÃ PHÁ HẾT RƯƠNG TRONG HANG & BẬT AUTO HATCH TRỨNG -> MỞ TRỨNG HANG ĐÃ CHỌN
                     elseif STATE.AutoHatch then
                         STATE.CurrentChestObj = nil
                         STATE.CurrentChestCF = nil
 
-                        local caveOpen, cavePhase, obj1, cf1, id1, remSec = isCaveOpen(STATE.SelectedCave)
+                        local caveOpen, cavePhase, obj1, cf1, id1, remSec = isCaveOpen(targetCave)
                         local eggObj, eggCF, eggId = nil, nil, nil
                         if caveOpen and cavePhase == "egg" then
                             eggObj, eggCF, eggId = obj1, cf1, id1
                         else
-                            eggObj, eggCF, eggId = getCaveEgg(STATE.SelectedCave)
+                            eggObj, eggCF, eggId = getCaveEgg(targetCave)
                         end
 
                         if eggObj and eggCF and eggId then
-                            STATE.CaveCFrames[STATE.SelectedCave] = eggCF
+                            STATE.CaveCFrames[targetCave] = eggCF
 
-                            -- KÍCH HOẠT PHIÊN MỞ TRỨNG LIÊN TỤC (KHÔNG TELEPORT RA NGOÀI BÃI FARM!)
+                            -- KÍCH HOẠT PHIÊN MỞ TRỨNG LIÊN TỤC CHO CHÍNH HANG NÀY (KHÔNG TP RA NGOÀI!)
                             STATE.CaveHatchActive = true
-                            STATE.CaveHatchCaveNum = STATE.SelectedCave
+                            STATE.CaveHatchCaveNum = targetCave
                             STATE.CaveHatchStartTime = os.time()
                             STATE.CaveHatchDuration = (remSec and remSec > 10) and remSec or 300
                             STATE.CaveHatchEggId = eggId
@@ -2028,16 +2047,16 @@ task.spawn(function()
                                 safeTeleportTo(standPos, eggCF.Position)
                                 task.wait(0.2)
                             end
-                            STATE.CurrentAction = "🎉 Rương đã vỡ! Đã khóa vị trí mở trứng " .. eggId .. " trong 5 phút"
+                            STATE.CurrentAction = "🎉 Rương đã vỡ! Đã khóa vị trí mở trứng " .. eggId .. " Hang " .. targetCave .. " trong 5 phút"
                         else
-                            STATE.CurrentAction = "⏳ Chờ Trứng Hang " .. STATE.SelectedCave .. " xuất hiện..."
+                            STATE.CurrentAction = "⏳ Chờ Trứng Hang " .. targetCave .. " xuất hiện..."
                         end
 
-                    -- TRƯỜNG HỢP 2C: ĐÃ PHÁ HẾT RƯƠNG VÀ KHÔNG MỞ TRỨNG -> VỀ BÃI FARM CÀY TIỀN
+                    -- TRƯỜNG HỢP 2C: HANG ĐANG COOLDOWN HOẶC ĐÃ HẾT RƯƠNG/TRỨNG -> VỀ BÃI FARM CHỜ HANG HỒI CHIÊU
                     elseif STATE.AutoFarmMoney and hrp then
                         STATE.CurrentChestObj = nil
                         STATE.CurrentChestCF = nil
-                        STATE.CurrentAction = "⏳ Đã phá hết rương các hang! Đang cày tiền chờ rương mới..."
+                        STATE.CurrentAction = "⏳ Chờ Hang " .. targetCave .. " hồi chiêu / rương mới... Đang cày tiền bãi farm"
 
                         if STATE.FarmCFrame then
                             local dist = (STATE.FarmCFrame.Position - hrp.Position).Magnitude
