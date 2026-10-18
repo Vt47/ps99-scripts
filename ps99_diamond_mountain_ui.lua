@@ -1334,26 +1334,8 @@ task.spawn(function()
 
     -- BỘ QUÉT TÌM YETI CHÍNH XÁC (DỰA TRÊN DỮ LIỆU THỰC TẾ BREAKABLES & GUI YETI)
     local function checkYetiBoss()
-        -- 1. Kiểm tra Breakables thực tế trong workspace.__THINGS.Breakables TRƯỚC TIÊN
-        -- Dữ liệu scan chứng minh 100%: Yeti là một Breakable có BreakableID = "Yeti" và AreaID = "Yeti"
-        local Things = workspace:FindFirstChild("__THINGS")
-        local Breakables = Things and Things:FindFirstChild("Breakables")
-        if Breakables then
-            for _, b in pairs(Breakables:GetChildren()) do
-                local bId = tostring(b:GetAttribute("BreakableID") or "")
-                local areaId = tostring(b:GetAttribute("AreaID") or "")
-                if string.lower(bId) == "yeti" or string.lower(areaId) == "yeti" then
-                    local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
-                    if part then
-                        return b, part.CFrame, nil
-                    elseif STATE.YetiArenaCFrame then
-                        return b, STATE.YetiArenaCFrame, nil
-                    end
-                end
-            end
-        end
-
-        -- 2. Quét PlayerGui (Khi người chơi ở xa chưa stream Breakables đỉnh núi)
+        -- 1. Quét PlayerGui trước xem có banner đếm ngược Yeti Cooldown hay không
+        -- Nếu đang có thông báo đếm ngược -> Yeti CHẮC CHẮN chưa hồi sinh / đang cooldown
         local isCooldown = false
         local cdString = nil
         local isBossActiveGui = false
@@ -1371,15 +1353,15 @@ task.spawn(function()
                        or string.find(string.lower(pName), "quest") then
                         -- Bỏ qua
                     else
-                        -- A. Cooldown Yeti thật
+                        -- A. Cooldown Yeti thật ("The Yeti returns in 4:04", "You can fight the Yeti again in 4:04")
                         if string.find(t, "yeti") and (string.find(t, "returns in") or string.find(t, "again in") or string.find(t, "respawn in") or string.find(t, "next yeti") or string.find(t, "fight the yeti again")) then
                             isCooldown = true
                             cdString = string.match(g.Text, "%d+:%d+") or g.Text
                             break
                         end
 
-                        -- B. Nhận diện Yeti Boss Đang Giao Tranh (CHỈ chấp nhận khi Parent là "Yeti" và có chữ damage/shiny/golden)
-                        if pName == "Yeti" and (string.find(t, "damage") or string.find(t, "golden yeti") or string.find(t, "shiny yeti") or string.find(t, "rainbow yeti"))
+                        -- B. Nhận diện Yeti Boss Đang Giao Tranh
+                        if (pName == "Yeti" or string.find(string.lower(pName), "yeti")) and (string.find(t, "damage") or string.find(t, "yeti"))
                            and not string.find(t, "returns") and not string.find(t, "again in") and not string.find(t, "leaderboard") and not string.find(t, "fight the yeti") then
                             isBossActiveGui = true
                         end
@@ -1393,12 +1375,41 @@ task.spawn(function()
             return nil, nil, cdString
         end
 
-        -- Nếu trên màn hình có thanh máu giao tranh (The Golden Yeti / The Shiny Yeti / Parent Yeti):
+        -- 2. Kiểm tra Breakables thực tế trong workspace.__THINGS.Breakables
+        local Things = workspace:FindFirstChild("__THINGS")
+        local Breakables = Things and Things:FindFirstChild("Breakables")
+        if Breakables then
+            -- Quét BreakableID / AreaID có chữ "yeti"
+            for _, b in pairs(Breakables:GetChildren()) do
+                local bId = string.lower(tostring(b:GetAttribute("BreakableID") or ""))
+                local areaId = string.lower(tostring(b:GetAttribute("AreaID") or ""))
+                if string.find(bId, "yeti") or string.find(areaId, "yeti") then
+                    local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
+                    if part then
+                        return b, part.CFrame, nil
+                    elseif STATE.YetiArenaCFrame then
+                        return b, STATE.YetiArenaCFrame, nil
+                    end
+                end
+            end
+
+            -- Quét mọi Breakables nằm trong bán kính 100 studs quanh đấu trường Yeti (đỉnh Diamond Mountain)
+            if STATE.YetiArenaCFrame then
+                for _, b in pairs(Breakables:GetChildren()) do
+                    local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
+                    if part and (part.Position - STATE.YetiArenaCFrame.Position).Magnitude < 100 then
+                        return b, part.CFrame, nil
+                    end
+                end
+            end
+        end
+
+        -- 3. Nếu trên màn hình có thanh máu giao tranh (The Golden Yeti / The Shiny Yeti / Parent Yeti):
         if isBossActiveGui and STATE.YetiArenaCFrame then
             return "YetiActiveFromGui", STATE.YetiArenaCFrame, nil
         end
 
-        -- 3. Kiểm tra Model Boss trong Workspace (LOẠI BỎ Leaderboard, tượng, pet)
+        -- 4. Kiểm tra Model Boss trong Workspace (LOẠI BỎ Leaderboard, tượng, pet)
         for _, obj in pairs(workspace:GetChildren()) do
             if obj:IsA("Model") then
                 local l = string.lower(obj.Name)
@@ -1461,6 +1472,7 @@ task.spawn(function()
     end
 
     -- VÒNG LẶP SĂN YETI
+    local yetiMissingChecks = 0
     task.spawn(function()
         while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(0.4)
@@ -1468,20 +1480,18 @@ task.spawn(function()
                 local yetiObj, yetiPos, cdTimer = checkYetiBoss()
 
                 if yetiObj and yetiPos then
+                    yetiMissingChecks = 0
                     STATE.YetiStatusText = "🔥 Đang Sống!"
                     STATE.CurrentYetiObj = yetiObj
-                    -- Không rời hang nếu đang trong phiên mở trứng liên tục để tránh đóng hang
-                    if not STATE.CaveHatchActive then
-                        if not STATE.IsFightingYeti then
-                            STATE.IsFightingYeti = true
-                            STATE.CurrentAction = "⚔️ Đang săn Yeti Boss!"
-                            if not STATE.YetiArenaCFrame and typeof(yetiPos) == "CFrame" then
-                                STATE.YetiArenaCFrame = yetiPos
-                            end
-                            safeTeleport(yetiPos + Vector3.new(0, 2, 6))
+
+                    -- Ưu tiên số 1 tuyệt đối: Đang có Yeti thì lập tức bật cờ giao tranh và bay tới hạ gục!
+                    if not STATE.IsFightingYeti then
+                        STATE.IsFightingYeti = true
+                        STATE.CurrentAction = "⚔️ Đang săn Yeti Boss!"
+                        if not STATE.YetiArenaCFrame and typeof(yetiPos) == "CFrame" then
+                            STATE.YetiArenaCFrame = yetiPos
                         end
-                    else
-                        STATE.YetiStatusText = "🔥 Đang Sống (Ưu tiên mở trứng hang)"
+                        safeTeleport(yetiPos + Vector3.new(0, 2, 6))
                     end
                 else
                     STATE.CurrentYetiObj = nil
@@ -1491,40 +1501,51 @@ task.spawn(function()
                         STATE.YetiStatusText = "⏳ Chưa hồi sinh"
                     end
 
+                    -- XÁC NHẬN YETI ĐÃ CHẾT: Cần có cooldown timer trên màn hình HOẶC quét vắng mặt >= 5 lần liên tiếp (~2s)
                     if STATE.IsFightingYeti then
-                        STATE.IsFightingYeti = false
-                        STATE.YetiKilledCount = STATE.YetiKilledCount + 1
-                        STATE.CurrentAction = "🏆 Yeti đã bị hạ gục!"
+                        yetiMissingChecks = yetiMissingChecks + 1
+                        local isConfirmedDead = (cdTimer ~= nil) or (yetiMissingChecks >= 5)
 
-                        if STATE.YetiCooldownAlert then
-                            sendWebhook(
-                                "💥 ĐÃ HẠ GỤC YETI BOSS!",
-                                "Tài khoản **" .. Player.Name .. "** đã tiêu diệt Yeti thành công!\n**Tổng số Yeti:** `" .. STATE.YetiKilledCount .. " con`",
-                                16766720
-                            )
-                        end
+                        if isConfirmedDead then
+                            yetiMissingChecks = 0
+                            STATE.IsFightingYeti = false
+                            STATE.YetiKilledCount = STATE.YetiKilledCount + 1
+                            STATE.CurrentAction = "🏆 Yeti đã bị hạ gục!"
 
-                        task.wait(1.5)
-
-                        if STATE.CaveHatchActive and STATE.CaveHatchEggCF then
-                            safeTeleport(STATE.CaveHatchEggCF)
-                            STATE.CurrentAction = "🚀 Quay lại mở trứng Hang " .. STATE.CaveHatchCaveNum
-                        elseif STATE.AutoHatch or STATE.AutoCaveChests then
-                            local isOpen, phase, obj, cf = isCaveOpen(STATE.SelectedCave)
-                            if isOpen and cf then
-                                safeTeleport(cf)
-                                STATE.CurrentAction = "🚀 Quay lại Hang " .. STATE.SelectedCave
-                            elseif STATE.FarmCFrame then
-                                safeTeleport(STATE.FarmCFrame)
-                                STATE.CurrentAction = "⏳ Hang " .. STATE.SelectedCave .. " chưa mở / đang cooldown. Về bãi farm tiền..."
+                            if STATE.YetiCooldownAlert then
+                                sendWebhook(
+                                    "💥 ĐÃ HẠ GỤC YETI BOSS!",
+                                    "Tài khoản **" .. Player.Name .. "** đã tiêu diệt Yeti thành công!\n**Tổng số Yeti:** `" .. STATE.YetiKilledCount .. " con`",
+                                    16766720
+                                )
                             end
-                        elseif STATE.AutoFarmMoney then
-                            if STATE.FarmCFrame then
-                                safeTeleport(STATE.FarmCFrame)
-                                STATE.CurrentAction = "💰 Cày tiền tại Bãi Farm"
+
+                            task.wait(1.0)
+
+                            if STATE.CaveHatchActive and STATE.CaveHatchEggCF then
+                                safeTeleport(STATE.CaveHatchEggCF)
+                                STATE.CurrentAction = "🚀 Quay lại tiếp tục mở trứng Hang " .. STATE.CaveHatchCaveNum
+                            elseif STATE.AutoHatch or STATE.AutoCaveChests then
+                                local isOpen, phase, obj, cf = isCaveOpen(STATE.SelectedCave)
+                                if isOpen and cf then
+                                    safeTeleport(cf)
+                                    STATE.CurrentAction = "🚀 Quay lại Hang " .. STATE.SelectedCave
+                                elseif STATE.FarmCFrame then
+                                    safeTeleport(STATE.FarmCFrame)
+                                    STATE.CurrentAction = "⏳ Hang " .. STATE.SelectedCave .. " chưa mở / đang cooldown. Về bãi farm tiền..."
+                                end
+                            elseif STATE.AutoFarmMoney then
+                                if STATE.FarmCFrame then
+                                    safeTeleport(STATE.FarmCFrame)
+                                    STATE.CurrentAction = "💰 Cày tiền tại Bãi Farm"
+                                end
                             end
+                        else
+                            -- Vẫn đang trong trận đánh: Không được teleport hay rời sàn đấu!
+                            STATE.CurrentAction = "⚔️ Đang tiêu diệt Yeti Boss..."
                         end
                     else
+                        yetiMissingChecks = 0
                         if STATE.AutoHatch or STATE.AutoCaveChests then
                             STATE.CurrentAction = "🚀 Đang xử lý Hang " .. STATE.SelectedCave
                         elseif STATE.AutoFarmMoney then
@@ -1567,7 +1588,6 @@ task.spawn(function()
     end
 
     -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG (NON-DESTRUCTIVE)
-    -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG (NON-DESTRUCTIVE)
     local function handleEggOpeningVisuals()
         pcall(function()
             if STATE.SkipAnimation then
@@ -1584,22 +1604,39 @@ task.spawn(function()
                 end
             end
 
-            -- Tự động đóng pop-up OK / Continue / Dismiss / Something went wrong
+            -- Tự động đóng pop-up thông báo hoặc lỗi Something went wrong (#6)
+            -- CHỈ đóng TextButton có chữ "Ok!" / "Ok" / "Continue" chính xác
+            -- TUYỆT ĐỐI KHÔNG dùng string.find(bText, "ok") để tránh click vào Enchant Book / Unlock / Tokens / Robux purchase!
             task.spawn(function()
                 task.wait(0.15)
                 for _, btn in pairs(Player.PlayerGui:GetDescendants()) do
-                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
-                        local bName = string.lower(btn.Name)
-                        local bText = btn:IsA("TextButton") and string.lower(btn.Text) or ""
-                        if bText == "ok" or bText == "ok!" or string.find(bText, "ok") or bText == "continue" or bName == "ok" or bName == "close" or bName == "dismiss" or bName == "next" then
-                            pcall(function()
-                                if firesignal then
-                                    firesignal(btn.Activated)
-                                    firesignal(btn.MouseButton1Click)
-                                elseif btn.MouseButton1Click then
-                                    btn.MouseButton1Click:Fire()
+                    if btn:IsA("TextButton") and btn.Visible then
+                        local bText = string.lower(btn.Text)
+                        if bText == "ok" or bText == "ok!" or bText == "continue" then
+                            -- Kiểm tra an toàn: Không bao giờ click vào UI của Shop, Gamepass, Robux, Enchants, Inventory
+                            local isSafeModal = true
+                            local curr = btn.Parent
+                            local depth = 0
+                            while curr and depth < 6 do
+                                local pName = string.lower(curr.Name)
+                                if string.find(pName, "shop") or string.find(pName, "pass") or string.find(pName, "robux") or string.find(pName, "product") or string.find(pName, "enchant") or string.find(pName, "inventory") or string.find(pName, "merchant") or string.find(pName, "exclusive") then
+                                    isSafeModal = false
+                                    break
                                 end
-                            end)
+                                curr = curr.Parent
+                                depth = depth + 1
+                            end
+
+                            if isSafeModal then
+                                pcall(function()
+                                    if firesignal then
+                                        firesignal(btn.Activated)
+                                        firesignal(btn.MouseButton1Click)
+                                    elseif btn.MouseButton1Click then
+                                        btn.MouseButton1Click:Fire()
+                                    end
+                                end)
+                            end
                         end
                     end
                 end
@@ -1607,7 +1644,7 @@ task.spawn(function()
         end)
     end
 
-    -- HÀM MỞ TRỨNG TỔNG HỢP AN TOÀN (SAFE EGG HATCHER - TUYỆT ĐỐI KHÔNG CLICK NÚT MUA ROBUX / KHÔNG SPAM REMOTE LẠ)
+    -- HÀM MỞ TRỨNG TỔNG HỢP AN TOÀN (SAFE EGG HATCHER - TUYỆT ĐỐI KHÔNG CLICK NÚT MUA ROBUX / KHÔNG NHẤN PHÍM TÙY TIỆN)
     local function attemptHatchEgg(eggObj, eggId, amt)
         if not eggId and not eggObj then return false end
         amt = amt or 1
@@ -1635,17 +1672,6 @@ task.spawn(function()
             end
         end
 
-        -- 3. NHẤN PHÍM TƯƠNG TÁC 'E' (VIRTUALINPUTMANAGER)
-        pcall(function()
-            local VIM = game:GetService("VirtualInputManager")
-            if VIM then
-                VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.04)
-                VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                hatched = true
-            end
-        end)
-
         return hatched
     end
 
@@ -1671,11 +1697,19 @@ task.spawn(function()
         while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(0.25)
             
-            -- Chỉ hoạt động khi không bận giao tranh Yeti Boss
-            if not STATE.IsFightingYeti then
-                local char = Player.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                
+            local char = Player.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+            -- Kiểm tra xem nhân vật có đang ở gần đấu trường Yeti không
+            local isNearYetiArena = false
+            if STATE.AutoYeti and STATE.YetiArenaCFrame and hrp then
+                if (hrp.Position - STATE.YetiArenaCFrame.Position).Magnitude < 120 then
+                    isNearYetiArena = true
+                end
+            end
+
+            -- Tuyệt đối không can thiệp hay teleport nếu đang đánh Yeti hoặc đang ở đấu trường Yeti
+            if not STATE.IsFightingYeti and not isNearYetiArena then
                 -- ========================================================
                 -- CHẾ ĐỘ 1: PHIÊN MỞ TRỨNG HANG LIÊN TỤC (CAVE HATCH SESSION)
                 -- Khi đã vào hang mở trứng thì mở liên tục tới khi hết giờ, KHÔNG TP RA NGOÀI!
@@ -1719,12 +1753,14 @@ task.spawn(function()
                         end
                     else
                         -- Đang trong phiên mở trứng: giữ nhân vật đứng cố định trên bệ trứng trong hang
+                        local isAtEgg = true
                         if eggCF then
                             local dist = (eggCF.Position - hrp.Position).Magnitude
                             if dist > 8 then
+                                isAtEgg = false
                                 local standPos = eggCF.Position + Vector3.new(0, 0.5, 0)
                                 safeTeleportTo(standPos, eggCF.Position)
-                                task.wait(0.15)
+                                task.wait(0.25)
                             end
                         end
 
@@ -1733,22 +1769,25 @@ task.spawn(function()
                         local timeStr = string.format("%d:%02d", mins, secs)
                         STATE.CurrentAction = "🥚 Mở trứng H" .. STATE.CaveHatchCaveNum .. " (" .. tostring(eggId) .. ") | Còn: " .. timeStr
 
-                        local amt = STATE.HatchAmount or 1
-                        local hatchedThisCycle = attemptHatchEgg(eggObj, eggId, amt)
+                        -- Chỉ mở trứng khi nhân vật đã đứng đúng vị trí trước bệ trứng (tránh lỗi Something went wrong #6)
+                        if isAtEgg then
+                            local amt = STATE.HatchAmount or 1
+                            local hatchedThisCycle = attemptHatchEgg(eggObj, eggId, amt)
 
-                        -- Cập nhật bộ đếm số trứng đã mở
-                        local curPetCount = getInventoryPetCount()
-                        if curPetCount and lastPetCount then
-                            if curPetCount > lastPetCount then
-                                local deltaPets = curPetCount - lastPetCount
-                                STATE.TotalHatchedEggs = STATE.TotalHatchedEggs + deltaPets
+                            -- Cập nhật bộ đếm số trứng đã mở
+                            local curPetCount = getInventoryPetCount()
+                            if curPetCount and lastPetCount then
+                                if curPetCount > lastPetCount then
+                                    local deltaPets = curPetCount - lastPetCount
+                                    STATE.TotalHatchedEggs = STATE.TotalHatchedEggs + deltaPets
+                                end
+                                lastPetCount = curPetCount
+                            elseif hatchedThisCycle then
+                                STATE.TotalHatchedEggs = STATE.TotalHatchedEggs + amt
                             end
-                            lastPetCount = curPetCount
-                        elseif hatchedThisCycle then
-                            STATE.TotalHatchedEggs = STATE.TotalHatchedEggs + amt
-                        end
 
-                        handleEggOpeningVisuals()
+                            handleEggOpeningVisuals()
+                        end
                     end
 
                 -- ========================================================
