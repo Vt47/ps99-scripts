@@ -254,6 +254,31 @@ loadConfig()
 -- Đảm bảo mỗi lần execute script thì số trứng đã mở luôn được đặt lại về 0
 STATE.TotalHatchedEggs = 0
 
+-- Chống ngắt kết nối AFK bằng cách vô hiệu hóa kết nối Idled của CoreScript (Layer 1)
+local getcons = getconnections or get_signal_cons
+local function disableIdledConnections()
+    pcall(function()
+        if getcons then
+            for _, conn in ipairs(getcons(Player.Idled)) do
+                pcall(function()
+                    if type(conn.Disable) == "function" then
+                        conn:Disable()
+                    elseif type(conn.disable) == "function" then
+                        conn:disable()
+                    elseif type(conn.Disconnect) == "function" then
+                        conn:Disconnect()
+                    elseif type(conn.disconnect) == "function" then
+                        conn:disconnect()
+                    end
+                end)
+            end
+        end
+    end)
+end
+if STATE.AntiAFK then
+    disableIdledConnections()
+end
+
 --========================================================================
 -- CÁC HÀM TIỆN ÍCH TỌA ĐỘ, RƯƠNG & TRỨNG HANG NÚI
 --========================================================================
@@ -1304,7 +1329,10 @@ createActionButton(FarmPage, "🚀 Teleport Về Bãi Farm Ngay", Color3.fromRGB
 end)
 
 -- TRANG 5: CÀI ĐẶT
-createToggle(SettingsPage, "🛡️ Anti-AFK (Chống văng 20 phút)", STATE.AntiAFK, function(v) STATE.AntiAFK = v end)
+createToggle(SettingsPage, "🛡️ Anti-AFK (Chống văng 20 phút)", STATE.AntiAFK, function(v)
+    STATE.AntiAFK = v
+    if v then disableIdledConnections() end
+end)
 createToggle(SettingsPage, "🔄 Auto Reconnect Khi Đứt Mạng", STATE.AutoReconnect, function(v) STATE.AutoReconnect = v end)
 createToggle(SettingsPage, "🔔 Báo Webhook Khi Mở/Execute Script", STATE.ExecuteAlert, function(v) STATE.ExecuteAlert = v saveConfig() end)
 createToggle(SettingsPage, "🧲 Auto Hút Orbs & Nhặt Lootbags", STATE.AutoCollectDrops, function(v) STATE.AutoCollectDrops = v end)
@@ -2061,25 +2089,100 @@ task.spawn(function()
         end
     end)
 
-    -- Anti-AFK
-    Player.Idled:Connect(function()
-        if STATE.AntiAFK and _G.PS99_SUMMIT_RUNNING and VirtualUser then
-            pcall(function()
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(Vector2.new())
-            end)
+    -- ========================================================
+    -- BỘ CHỐNG AFK & AUTO RECONNECT 4 LỚP (BULLETPROOF ANTI-AFK ENGINE)
+    -- ========================================================
+    local VIM
+    pcall(function()
+        VIM = game:GetService("VirtualInputManager")
+    end)
+
+    -- Lớp 1: Bắt sự kiện Idled dự phòng nếu getconnections chưa tắt kịp
+    pcall(function()
+        Player.Idled:Connect(function()
+            if STATE.AntiAFK and _G.PS99_SUMMIT_RUNNING then
+                disableIdledConnections()
+                if VIM then
+                    pcall(function()
+                        VIM:SendKeyEvent(true, Enum.KeyCode.F15, false, game)
+                        task.wait(0.01)
+                        VIM:SendKeyEvent(false, Enum.KeyCode.F15, false, game)
+                    end)
+                end
+                if VirtualUser then
+                    pcall(function()
+                        VirtualUser:CaptureController()
+                        VirtualUser:ClickButton2(Vector2.new(50, 50))
+                    end)
+                end
+            end
+        end)
+    end)
+
+    -- Lớp 2: Chủ động phát tín hiệu hoạt động định kỳ mỗi 45s (Active Heartbeat)
+    -- Liên tục reset bộ đếm idle của Roblox engine về 0, không bao giờ để chạm mốc 20 phút
+    task.spawn(function()
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
+            task.wait(45)
+            if STATE.AntiAFK then
+                disableIdledConnections()
+                if VIM then
+                    pcall(function()
+                        VIM:SendKeyEvent(true, Enum.KeyCode.F15, false, game)
+                        task.wait(0.02)
+                        VIM:SendKeyEvent(false, Enum.KeyCode.F15, false, game)
+                    end)
+                end
+                if VirtualUser then
+                    pcall(function()
+                        VirtualUser:CaptureController()
+                        VirtualUser:ClickButton2(Vector2.new(60, 60))
+                    end)
+                end
+            end
         end
     end)
 
-    -- Auto Reconnect
-    pcall(function()
-        GuiService.ErrorMessageChanged:Connect(function()
-            if STATE.AutoReconnect and _G.PS99_SUMMIT_RUNNING and GuiService:GetErrorCode().Value > 0 then
-                sendWebhook("⚠️ MẤT KẾT NỐI", "Đang thử Reconnect vào server sau 10 giây...", 15158332)
-                task.wait(10)
-                TeleportService:Teleport(game.PlaceId, Player)
+    -- Lớp 3 & 4: Tự động Reconnect khi mất mạng hoặc bị ngắt kết nối (Loop retry bền bỉ)
+    local isReconnecting = false
+    local function triggerReconnect(reason)
+        if isReconnecting or not STATE.AutoReconnect or not _G.PS99_SUMMIT_RUNNING then return end
+        isReconnecting = true
+        task.spawn(function()
+            sendWebhook("⚠️ MẤT KẾT NỐI", (reason or "Phát hiện mất kết nối!") .. "\nĐang tự động kết nối lại sau 5 giây...", 15158332)
+            task.wait(5)
+            while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
+                pcall(function()
+                    TeleportService:Teleport(game.PlaceId, Player)
+                end)
+                task.wait(8)
             end
         end)
+    end
+
+    pcall(function()
+        GuiService.ErrorMessageChanged:Connect(function()
+            if GuiService:GetErrorCode().Value > 0 then
+                triggerReconnect("Mã lỗi mạng: " .. tostring(GuiService:GetErrorCode().Value))
+            end
+        end)
+    end)
+
+    task.spawn(function()
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
+            task.wait(3)
+            if STATE.AutoReconnect and not isReconnecting then
+                pcall(function()
+                    local promptOverlay = CoreGui:FindFirstChild("RobloxPromptGui") and CoreGui.RobloxPromptGui:FindFirstChild("promptOverlay")
+                    if promptOverlay then
+                        local errorPrompt = promptOverlay:FindFirstChild("ErrorPrompt")
+                        if errorPrompt and errorPrompt.Visible then
+                            triggerReconnect("Phát hiện màn hình ngắt kết nối (Error Prompt)!")
+                        end
+                    end
+                end)
+            end
+        end
     end)
 
     -- CẬP NHẬT DASHBOARD
