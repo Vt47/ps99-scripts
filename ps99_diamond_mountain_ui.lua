@@ -203,7 +203,6 @@ local function saveConfig()
             ShowHatchPopup = STATE.ShowHatchPopup,
             SkipAnimation = STATE.SkipAnimation,
             SelectedEggName = STATE.SelectedEggName,
-            TotalHatchedEggs = STATE.TotalHatchedEggs,
             ExecuteAlert = STATE.ExecuteAlert
         }
         writefile(CONFIG_FILE, HttpService:JSONEncode(data))
@@ -245,12 +244,13 @@ local function loadConfig()
         if data.ShowHatchPopup ~= nil then STATE.ShowHatchPopup = data.ShowHatchPopup end
         if data.SkipAnimation ~= nil then STATE.SkipAnimation = data.SkipAnimation end
         if data.SelectedEggName and data.SelectedEggName ~= "" then STATE.SelectedEggName = data.SelectedEggName end
-        if data.TotalHatchedEggs then STATE.TotalHatchedEggs = tonumber(data.TotalHatchedEggs) or 0 end
         if data.ExecuteAlert ~= nil then STATE.ExecuteAlert = data.ExecuteAlert end
     end)
 end
 
 loadConfig()
+-- Đảm bảo mỗi lần execute script thì số trứng đã mở luôn được đặt lại về 0
+STATE.TotalHatchedEggs = 0
 
 --========================================================================
 -- CÁC HÀM TIỆN ÍCH TỌA ĐỘ, RƯƠNG & TRỨNG HANG NÚI
@@ -488,6 +488,56 @@ local function isCaveOpen(caveNum)
     return false, "closed", nil, nil, nil, nil
 end
 
+-- LẤY THỜI GIAN VÀ TRẠNG THÁI MỞ CỦA HANG (HIỂN THỊ TRÊN GIAO DIỆN)
+local function getCaveOpenCountdown(caveNum)
+    caveNum = tonumber(caveNum) or STATE.SelectedCave
+
+    -- 1. Nếu đang trong phiên mở trứng liên tục
+    if STATE.CaveHatchActive and STATE.CaveHatchCaveNum == caveNum then
+        local elapsed = os.time() - STATE.CaveHatchStartTime
+        local rem = math.max(0, STATE.CaveHatchDuration - elapsed)
+        local m = math.floor(rem / 60)
+        local s = rem % 60
+        return string.format("🟢 Đang Mở (Còn %d:%02d)", m, s)
+    end
+
+    -- 2. Kiểm tra nếu trong hang đang có rương
+    local chestObj, chestCF = getCaveChest(caveNum)
+    if chestObj and chestCF then
+        return "🟢 Sẵn Sàng (Có Rương)"
+    end
+
+    -- 3. Kiểm tra biển báo hang
+    local isUnlocked, isCooldown, remSec, signText = getCaveSignInfo(caveNum)
+    if isCooldown then
+        if remSec and remSec > 0 then
+            local m = math.floor(remSec / 60)
+            local s = remSec % 60
+            return string.format("⏳ Mở sau %d:%02d", m, s)
+        elseif signText ~= "" then
+            return "⏳ " .. signText
+        else
+            return "⏳ Đang Chờ Hồi"
+        end
+    elseif isUnlocked then
+        if remSec and remSec > 0 then
+            local m = math.floor(remSec / 60)
+            local s = remSec % 60
+            return string.format("🟢 Đang Mở (Trứng: %d:%02d)", m, s)
+        else
+            return "🟢 Đang Mở (Sẵn Sàng)"
+        end
+    end
+
+    -- 4. Kiểm tra nếu có trứng và không có rương/cooldown
+    local eggObj, eggCF, eggId = getCaveEgg(caveNum)
+    if eggObj and eggCF then
+        return "🟢 Sẵn Sàng (Mở Trứng)"
+    end
+
+    return "⏳ Chưa Mở / Đang Quét..."
+end
+
 --========================================================================
 -- GIAO DIỆN NGƯỜI DÙNG (UI)
 --========================================================================
@@ -646,7 +696,8 @@ local function createPage(name)
     Page.ScrollBarThickness = 4
     Page.ScrollBarImageColor3 = Color3.fromRGB(80, 140, 255)
     Page.Visible = false
-    Page.CanvasSize = UDim2.new(0, 0, 0, 440)
+    Page.CanvasSize = UDim2.new(0, 0, 0, 480)
+    Page.AutomaticCanvasSize = Enum.AutomaticSize.Y
     Page.Parent = ContentContainer
 
     local Layout = Instance.new("UIListLayout")
@@ -827,6 +878,7 @@ end
 
 -- TRANG 1: DASHBOARD
 local lblAction = createInfoCard(DashboardPage, "⚡ Hoạt Động:", STATE.CurrentAction)
+local lblCaveTimer = createInfoCard(DashboardPage, "⏳ Thời Gian Mở Hang:", "Đang quét...")
 local lblYetiStatus = createInfoCard(DashboardPage, "👹 Tình Trạng Yeti:", STATE.YetiStatusText)
 local lblYetiCount = createInfoCard(DashboardPage, "🏆 Số Yeti Đã Diệt:", "0 con")
 local lblHatchedEggs = createInfoCard(DashboardPage, "🥚 Số Trứng Đã Mở:", "0 quả")
@@ -871,6 +923,7 @@ end)
 
 -- TRANG 3: HANG NÚI & TRỨNG
 local lblSelectedEgg = createInfoCard(TrailsPage, "🥚 Trứng Đã Chọn:", STATE.SelectedEggName)
+local lblCaveTimerTrails = createInfoCard(TrailsPage, "⏳ Thời Gian Mở Hang:", "Đang quét...")
 
 createActionButton(TrailsPage, "🔍 Quét Quả Trứng Đang Đứng Trước Mặt", Color3.fromRGB(40, 160, 120), function()
     local eggObj, eggCF, eggId = getCaveEgg(STATE.SelectedCave)
@@ -986,6 +1039,9 @@ for i = 1, 6 do
             local chestObj, chestCF = getCaveChest(i)
             if chestCF then STATE.CaveCFrames[i] = chestCF end
         end
+        local countdownStr = getCaveOpenCountdown(i)
+        lblCaveTimer.Text = countdownStr
+        if lblCaveTimerTrails then lblCaveTimerTrails.Text = countdownStr end
         saveConfig()
     end)
     table.insert(caveButtons, btn)
@@ -1843,6 +1899,11 @@ task.spawn(function()
             task.wait(1)
             pcall(function()
                 lblAction.Text = STATE.CurrentAction
+                local caveCountdownStr = getCaveOpenCountdown(STATE.SelectedCave)
+                lblCaveTimer.Text = caveCountdownStr
+                if lblCaveTimerTrails then
+                    lblCaveTimerTrails.Text = caveCountdownStr
+                end
                 lblYetiStatus.Text = STATE.YetiStatusText
                 lblYetiCount.Text = STATE.YetiKilledCount .. " con"
                 lblHatchedEggs.Text = formatNumber(STATE.TotalHatchedEggs) .. " quả"
