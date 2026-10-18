@@ -88,6 +88,7 @@ local STATE = {
     YetiKilledCount = 0,
     YetiCooldownAlert = true,
     IsFightingYeti = false,
+    CurrentYetiObj = nil,
     YetiArenaCFrame = CFrame.new(-30054.5, 756.8, 31135.3),
     YetiStatusText = "⏳ Đang quét...",
 
@@ -467,7 +468,7 @@ local lblPets = createInfoCard(DashboardPage, "🐾 Huge / Titanic:", "0 / 0")
 
 -- TRANG 2: YETI BOSS
 createToggle(YetiPage, "👹 Auto Tele & Đánh Yeti Khi Hồi Sinh", STATE.AutoYeti, function(v) STATE.AutoYeti = v end)
-createToggle(YetiPage, "⚔️ Tự Động Xuất Pet Đánh Yeti", STATE.AutoClickYeti, function(v) STATE.AutoClickYeti = v end)
+createToggle(YetiPage, "⚡ Auto Click & Xuất Pet Đánh Yeti", STATE.AutoClickYeti, function(v) STATE.AutoClickYeti = v end)
 createToggle(YetiPage, "🔔 Báo Webhook Khi Hạ Gục Yeti", STATE.YetiCooldownAlert, function(v) STATE.YetiCooldownAlert = v end)
 
 createActionButton(YetiPage, "📍 Lưu Vị Trí Đấu Trường Yeti (Đứng Tại Bãi Boss)", Color3.fromRGB(40, 140, 90), function()
@@ -892,6 +893,7 @@ task.spawn(function()
 
                 if yetiObj and yetiPos then
                     STATE.YetiStatusText = "🔥 Đang Sống!"
+                    STATE.CurrentYetiObj = yetiObj
                     if not STATE.IsFightingYeti then
                         STATE.IsFightingYeti = true
                         STATE.CurrentAction = "⚔️ Đang săn Yeti Boss!"
@@ -900,11 +902,8 @@ task.spawn(function()
                         end
                         safeTeleport(yetiPos + Vector3.new(0, 2, 6))
                     end
-
-                    if STATE.AutoClickYeti then
-                        performAttackYeti(yetiObj)
-                    end
                 else
+                    STATE.CurrentYetiObj = nil
                     if cdTimer then
                         STATE.YetiStatusText = "⏳ Đang Chờ (" .. cdTimer .. ")"
                     else
@@ -950,6 +949,17 @@ task.spawn(function()
                 end
             else
                 STATE.IsFightingYeti = false
+                STATE.CurrentYetiObj = nil
+            end
+        end
+    end)
+
+    -- VÒNG LẶP AUTO CLICK YETI TỐC ĐỘ CAO (~12 CLICKS / GIÂY)
+    task.spawn(function()
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
+            task.wait(0.08)
+            if STATE.AutoYeti and STATE.AutoClickYeti and STATE.IsFightingYeti then
+                performAttackYeti(STATE.CurrentYetiObj)
             end
         end
     end)
