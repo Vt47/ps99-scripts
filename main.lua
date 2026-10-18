@@ -29,6 +29,20 @@ local CoreGui = game:GetService("CoreGui")
 local Player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local Camera = workspace.CurrentCamera
 
+local Library, Client, Directory, Save, PetDirectory, Network, EggCmds
+pcall(function()
+    Library = RS:FindFirstChild("Library") or RS:WaitForChild("Library", 5)
+    if Library then
+        Client = Library:FindFirstChild("Client")
+        Directory = Library:FindFirstChild("Directory")
+        if Client and Client:FindFirstChild("Save") then Save = require(Client.Save) end
+        if Directory and Directory:FindFirstChild("Pets") then PetDirectory = require(Directory.Pets) end
+        if Client and Client:FindFirstChild("Network") then Network = require(Client.Network) end
+        if Client and Client:FindFirstChild("EggCmds") then EggCmds = require(Client.EggCmds) end
+    end
+end)
+if not Network and RS:FindFirstChild("Network") then Network = RS.Network end
+
 pcall(function()
     StarterGui:SetCore("SendNotification", {
         Title = "💎 PS99 Summit Suite V6",
@@ -375,6 +389,60 @@ local function isCaveOpen(caveNum)
     end
     local eggObj, eggCF, eggId = getCaveEgg(caveNum)
     if eggObj and eggCF and eggId then
+        -- 1. Kiểm tra trạng thái Khóa/Mở từ module EggCmds nội bộ của game
+        local isAvailable = true
+        if EggCmds then
+            pcall(function()
+                if EggCmds.IsEggLocked and EggCmds.IsEggLocked(eggId) then
+                    isAvailable = false
+                elseif EggCmds.IsEggAvailable and not EggCmds.IsEggAvailable(eggId) then
+                    isAvailable = false
+                elseif EggCmds.IsUnlocked and not EggCmds.IsUnlocked(eggId) then
+                    isAvailable = false
+                end
+            end)
+        end
+        if not isAvailable then
+            return false, "closed", nil, nil, nil
+        end
+
+        -- 2. Kiểm tra xem quanh khu vực trứng hoặc trên model có đồng hồ Cooldown hay không
+        local hasCooldown = false
+        pcall(function()
+            for _, d in pairs(eggObj:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Visible and d.Text ~= "" then
+                    local lTxt = string.lower(d.Text)
+                    if (string.find(lTxt, "cooldown") or string.find(lTxt, "returns in") or string.find(lTxt, "opens in")) and string.find(d.Text, "%d+:%d+") then
+                        hasCooldown = true
+                        break
+                    end
+                end
+            end
+            if not hasCooldown and eggCF then
+                for _, bb in pairs(workspace:GetDescendants()) do
+                    if (bb:IsA("BillboardGui") or bb:IsA("SurfaceGui")) and bb.Enabled then
+                        local pPart = bb.Adornee or (bb.Parent and bb.Parent:IsA("BasePart") and bb.Parent)
+                        if pPart and (pPart.Position - eggCF.Position).Magnitude < 110 then
+                            for _, tl in pairs(bb:GetDescendants()) do
+                                if tl:IsA("TextLabel") and tl.Visible and tl.Text ~= "" then
+                                    local lTxt = string.lower(tl.Text)
+                                    if string.find(tl.Text, "%d+:%d+") and not string.find(lTxt, "unlocked") and not string.find(lTxt, "ends in") then
+                                        hasCooldown = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    if hasCooldown then break end
+                end
+            end
+        end)
+
+        if hasCooldown then
+            return false, "closed", nil, nil, nil
+        end
+
         return true, "egg", eggObj, eggCF, eggId
     end
     return false, "closed", nil, nil, nil
@@ -595,6 +663,24 @@ addTabButton("👹 Yeti Boss", "Yeti")
 addTabButton("⛰️ Hang & Trứng", "Trails")
 addTabButton("💰 Bãi Farm Tiền", "Farm")
 addTabButton("⚙️ Cài Đặt AFK", "Settings")
+
+local btnSidebarReconnect = Instance.new("TextButton")
+btnSidebarReconnect.Name = "BtnSidebarReconnect"
+btnSidebarReconnect.Size = UDim2.new(1, -10, 0, 34)
+btnSidebarReconnect.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+btnSidebarReconnect.Text = "🔄 Reconnect Server"
+btnSidebarReconnect.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnSidebarReconnect.Font = Enum.Font.GothamBold
+btnSidebarReconnect.TextSize = 10
+btnSidebarReconnect.Parent = Sidebar
+
+local btnReconCorner = Instance.new("UICorner")
+btnReconCorner.CornerRadius = UDim.new(0, 8)
+btnReconCorner.Parent = btnSidebarReconnect
+
+btnSidebarReconnect.Activated:Connect(function()
+    TeleportService:Teleport(game.PlaceId, Player)
+end)
 
 btnDash.BackgroundColor3 = Color3.fromRGB(50, 110, 220)
 btnDash.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -955,10 +1041,6 @@ createActionButton(SettingsPage, "📋 Quét & Gửi Log Debug Về Discord", Co
     pcall(function()
         loadstring(game:HttpGet("https://raw.githubusercontent.com/Vt47/ps99-scripts/main/dump_info.lua"))()
     end)
-end)
-
-createActionButton(SettingsPage, "🔄 Reconnect Server (Vào Lại Server Mới)", Color3.fromRGB(200, 60, 60), function()
-    TeleportService:Teleport(game.PlaceId, Player)
 end)
 
 pcall(function()
