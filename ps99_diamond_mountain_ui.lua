@@ -1680,85 +1680,6 @@ task.spawn(function()
         end
     end)
 
-    -- TẤN CÔNG RƯƠNG TRONG HANG TỐC ĐỘ CAO (KẾT HỢP NETWORK + HƯỚNG NHÌN + VIRTUAL CLICK 3D)
-    local function performAttackChest(chestObj, chestCF)
-        if not chestObj or chestObj.Parent == nil then return end
-        local uid = tostring(chestObj.Name)
-        local char = Player.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-
-        -- 1. Gửi các gói tin Network tấn công (Player Tap + Pet Swarm + Damage)
-        if Network and Network.Fire then
-            pcall(function()
-                Network.Fire("Breakables_PlayerAttackBreakable", uid)
-                Network.Fire("Breakables_PlayerAttackBreakable", uid, "1")
-                Network.Fire("Breakables_PlayerAttackBreakable", uid, 1)
-                Network.Fire("Breakables_PlayerAttackBreakable", uid, {})
-            end)
-        end
-
-        -- 2. Hướng nhân vật và Camera nhìn thẳng vào tâm Rương
-        local part = getPartFromInstance(chestObj)
-        local targetPos = (part and part.Position) or (chestCF and chestCF.Position)
-        pcall(function()
-            if hrp and targetPos then
-                local pPos = hrp.Position
-                hrp.CFrame = CFrame.lookAt(pPos, Vector3.new(targetPos.X, pPos.Y, targetPos.Z))
-            end
-            if Camera and targetPos then
-                Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
-            end
-        end)
-
-        -- 3. Giả lập Click 3D lên đúng vị trí Rương trên màn hình
-        pcall(function()
-            if not Camera or not targetPos then return end
-            local screenPos, onScreen = Camera:WorldToViewportPoint(targetPos)
-            if onScreen then
-                local pt = Vector2.new(screenPos.X, screenPos.Y)
-                if VirtualUser then
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton1(pt)
-                end
-                local VIM = game:GetService("VirtualInputManager")
-                if VIM then
-                    VIM:SendMouseButtonEvent(pt.X, pt.Y, 0, true, game, 1)
-                    task.wait(0.01)
-                    VIM:SendMouseButtonEvent(pt.X, pt.Y, 0, false, game, 1)
-                end
-            else
-                if VirtualUser then
-                    local vp = Camera.ViewportSize
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton1(Vector2.new(vp.X / 2, vp.Y / 2))
-                end
-            end
-        end)
-
-        -- 4. Kích hoạt Tool / vũ khí của nhân vật (nếu có)
-        pcall(function()
-            local tool = char and char:FindFirstChildOfClass("Tool")
-            if tool then
-                tool:Activate()
-            end
-        end)
-    end
-
-    -- VÒNG LẶP AUTO CLICK & PHÁ RƯƠNG HANG TỐC ĐỘ CAO (~12 CLICKS / GIÂY)
-    task.spawn(function()
-        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
-            task.wait(0.08)
-            if (STATE.AutoCaveChests or STATE.AutoHatch) and not STATE.IsFightingYeti and STATE.CurrentChestObj then
-                if STATE.CurrentChestObj.Parent ~= nil then
-                    performAttackChest(STATE.CurrentChestObj, STATE.CurrentChestCF)
-                else
-                    STATE.CurrentChestObj = nil
-                    STATE.CurrentChestCF = nil
-                end
-            end
-        end
-    end)
-
     -- TÌM TÊN TRỨNG CHÍNH XÁC TRONG HANG
     local function getRealEggName()
         if STATE.SelectedEggName and STATE.SelectedEggName ~= "Nearest" and STATE.SelectedEggName ~= "" then
@@ -2001,20 +1922,19 @@ task.spawn(function()
                         local isNewChest = (STATE.CurrentChestObj == nil or STATE.CurrentChestObj ~= chestObj)
                         local dist = (chestCF.Position - hrp.Position).Magnitude
 
-                        -- Nếu là rương mới (ví dụ vừa phá xong rương 1 chuyển sang rương tiếp theo) hoặc khoảng cách > 6: Teleport ngay trước mặt rương
-                        if isNewChest or dist > 6 then
+                        -- Nếu là rương mới (ví dụ vừa phá xong rương 1 chuyển sang rương tiếp theo) hoặc khoảng cách > 5: Teleport ngay trước mặt rương
+                        if isNewChest or dist > 5 then
                             local dir = hrp.Position - chestCF.Position
                             local flatDir = Vector3.new(dir.X, 0, dir.Z)
-                            if flatDir.Magnitude < 1 then flatDir = Vector3.new(0, 0, 5) end
-                            local standPos = chestCF.Position + flatDir.Unit * 5.0 + Vector3.new(0, 0.5, 0)
+                            if flatDir.Magnitude < 1 then flatDir = Vector3.new(0, 0, 4) end
+                            local standPos = chestCF.Position + flatDir.Unit * 3.5 + Vector3.new(0, 0.5, 0)
                             safeTeleportTo(standPos, chestCF.Position)
                             task.wait(0.15)
                         end
 
                         STATE.CurrentChestObj = chestObj
                         STATE.CurrentChestCF = chestCF
-                        STATE.CurrentAction = "📦 Đang phá Rương Hang " .. targetCave .. " (UID: " .. chestObj.Name .. ")"
-                        performAttackChest(chestObj, chestCF)
+                        STATE.CurrentAction = "📦 Đang tại Rương Hang " .. targetCave .. " (UID: " .. chestObj.Name .. ")"
 
                     -- TRƯỜNG HỢP 2B: ĐÃ PHÁ HẾT RƯƠNG TRONG HANG & BẬT AUTO HATCH TRỨNG -> MỞ TRỨNG HANG ĐÃ CHỌN
                     elseif STATE.AutoHatch then
