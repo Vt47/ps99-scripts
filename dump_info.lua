@@ -123,19 +123,65 @@ for _, g in pairs(Player.PlayerGui:GetDescendants()) do
 end
 if timerFound == 0 then log("• Không phát hiện đồng hồ đếm ngược nào lúc này.") end
 
--- 3. REMOTES MỞ TRỨNG
-log("\n[3. CÁC REMOTES MỞ TRỨNG KHỚP TRONG GAME]")
+-- 3. REMOTES VÀ MODULE MỞ TRỨNG (DEEP SCAN)
+log("\n[3. KIỂM TRA REMOTES & MODULE MỞ TRỨNG]")
 local Remotes = Things and Things:FindFirstChild("__REMOTES")
 if Remotes then
-    local matched = {}
+    local allR = {}
     for _, r in pairs(Remotes:GetChildren()) do
-        local n = string.lower(r.Name)
-        if string.find(n, "egg") or string.find(n, "hatch") or string.find(n, "trail") then
-            table.insert(matched, r.Name .. " (" .. r.ClassName .. ")")
+        table.insert(allR, r.Name)
+    end
+    log("• Tất cả Remotes trong game (" .. #allR .. "): " .. table.concat(allR, ", "))
+else
+    log("• Không tìm thấy __THINGS.__REMOTES")
+end
+
+pcall(function()
+    local Lib = RS:FindFirstChild("Library")
+    local Client = Lib and Lib:FindFirstChild("Client")
+    if Client then
+        if Client:FindFirstChild("EggCmds") then
+            local EggCmds = require(Client.EggCmds)
+            local kList = {}
+            for k, _ in pairs(EggCmds) do table.insert(kList, tostring(k)) end
+            log("• Library.Client.EggCmds: " .. table.concat(kList, ", "))
+        end
+        if Client:FindFirstChild("Network") then
+            local Net = require(Client.Network)
+            local kList = {}
+            for k, _ in pairs(Net) do table.insert(kList, tostring(k)) end
+            log("• Library.Client.Network: " .. table.concat(kList, ", "))
         end
     end
-    log("• Remotes: " .. (#matched > 0 and table.concat(matched, ", ") or "None"))
-end
+end)
+
+-- 4. THỬ NGHIỆM GỌI MỞ TRỨNG THỰC TẾ TRÊN QUẢ TRỨNG SẴN SÀNG (HANG 5 / HANG 6)
+log("\n[4. TEST GỌI THỬ MỞ TRỨNG HANG 5: Frostline Egg]")
+pcall(function()
+    local Lib = RS:FindFirstChild("Library")
+    local Client = Lib and Lib:FindFirstChild("Client")
+    local Network = Client and Client:FindFirstChild("Network") and require(Client.Network)
+    local EggCmds = Client and Client:FindFirstChild("EggCmds") and require(Client.EggCmds)
+
+    if EggCmds then
+        if EggCmds.Purchase then
+            local s, r = pcall(function() return EggCmds.Purchase("Frostline Egg", 1) end)
+            log(string.format("• Test EggCmds.Purchase: success=%s, res=%s", tostring(s), tostring(r)))
+        end
+        if EggCmds.Open then
+            local s, r = pcall(function() return EggCmds.Open("Frostline Egg", 1) end)
+            log(string.format("• Test EggCmds.Open: success=%s, res=%s", tostring(s), tostring(r)))
+        end
+    end
+
+    if Network and Network.Invoke then
+        local candidateCalls = { "buy egg", "Eggs_RequestPurchase", "CustomEggs_Purchase", "CustomEggs_RequestPurchase" }
+        for _, cName in ipairs(candidateCalls) do
+            local s, r1, r2 = pcall(function() return Network.Invoke(cName, "Frostline Egg", 1) end)
+            log(string.format("• Test Network.Invoke(\"%s\"): success=%s, res=%s, %s", cName, tostring(s), tostring(r1), tostring(r2)))
+        end
+    end
+end)
 
 local fullLog = table.concat(logLines, "\n")
 if setclipboard then
@@ -143,12 +189,24 @@ if setclipboard then
     log("\n=> ĐÃ COPY TOÀN BỘ VÀO BỘ NHỚ TẠM (CLIPBOARD)!")
 end
 
-local jsonBody = HttpService:JSONEncode({
-    username = "PS99 Quick Scanner",
-    content = "📋 **BÁO CÁO NHANH HANG & COOLDOWN TỪ GAME**\n```yaml\n" .. fullLog .. "\n```"
-})
-
-local sentOk, sentResult = sendWebhook(WEBHOOK, jsonBody)
+local sentOk = false
+if #fullLog <= 1800 then
+    local jsonBody = HttpService:JSONEncode({
+        username = "PS99 Quick Scanner",
+        content = "📋 **BÁO CÁO NHANH HANG & COOLDOWN TỪ GAME**\n```yaml\n" .. fullLog .. "\n```"
+    })
+    sentOk = sendWebhook(WEBHOOK, jsonBody)
+else
+    for i = 1, #fullLog, 1700 do
+        local chunk = string.sub(fullLog, i, i + 1700 - 1)
+        local jsonBody = HttpService:JSONEncode({
+            username = "PS99 Quick Scanner",
+            content = "```yaml\n" .. chunk .. "\n```"
+        })
+        sentOk = sendWebhook(WEBHOOK, jsonBody)
+        task.wait(0.5)
+    end
+end
 
 pcall(function()
     if sentOk then
@@ -160,7 +218,7 @@ pcall(function()
     else
         StarterGui:SetCore("SendNotification", {
             Title = "📋 Đã Copy Clipboard!",
-            Text = "Đã copy log (~25 dòng). Bạn chỉ cần dán vào chat!",
+            Text = "Đã copy log. Bạn chỉ cần dán vào chat!",
             Duration = 5
         })
     end
