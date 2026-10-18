@@ -26,31 +26,34 @@ if hrp then
     log(string.format("Tọa độ hiện tại: Vector3.new(%.1f, %.1f, %.1f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z))
 end
 
--- 1. QUÉT TẤT CẢ CÁC GUI LIÊN QUAN ĐẾN YETI & BOSS
-log("\n--- 1. CÁC GUI TRÊN MÀN HÌNH LIÊN QUAN ĐẾN YETI / BOSS ---")
+-- 1. QUÉT TẤT CẢ CÁC GUI LIÊN QUAN ĐẾN YETI, BOSS, RƯƠNG HANG & TRỨNG
+log("\n--- 1. CÁC GUI TRÊN MÀN HÌNH (BOSS, HANG, RƯƠNG, TRỨNG, COOLDOWN) ---")
 local foundGuiCount = 0
 for _, g in pairs(Player.PlayerGui:GetDescendants()) do
     if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible and g.Text ~= "" then
         local t = string.lower(g.Text)
-        if string.find(t, "yeti") or string.find(t, "returns") or string.find(t, "team up") or string.find(t, "damage") or string.find(t, "again in") then
+        if string.find(t, "yeti") or string.find(t, "returns") or string.find(t, "team up")
+           or string.find(t, "damage") or string.find(t, "again in") or string.find(t, "chest")
+           or string.find(t, "trail") or string.find(t, "egg") or string.find(t, "luck")
+           or string.find(t, "hatch") or string.find(t, "cave") or string.find(t, "unlock") then
             foundGuiCount = foundGuiCount + 1
             log(string.format("• GUI [%s]: \"%s\"", g.Name, g.Text))
             log(string.format("  Parent: %s", g.Parent and g.Parent.Name or "None"))
         end
     end
 end
-if foundGuiCount == 0 then log("Không có GUI nào chứa từ khóa Yeti.") end
+if foundGuiCount == 0 then log("Không có GUI nào liên quan trên màn hình.") end
 
 -- 2. QUÉT CÁC BREAKABLES GẦN BẠN
-log("\n--- 2. DANH SÁCH BREAKABLES TRONG BÁN KÍNH 120 STUDS ---")
+log("\n--- 2. DANH SÁCH BREAKABLES TRONG BÁN KÍNH 180 STUDS ---")
 local Things = workspace:FindFirstChild("__THINGS")
 local Breakables = Things and Things:FindFirstChild("Breakables")
 local bCount = 0
 if Breakables then
     for _, b in pairs(Breakables:GetChildren()) do
-        local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
+        local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)))
         local dist = (part and hrp) and (part.Position - hrp.Position).Magnitude or 9999
-        if dist < 120 then
+        if dist < 180 then
             bCount = bCount + 1
             log(string.format("• Breakable: \"%s\" (Cách: %.1f studs)", b.Name, dist))
             for k, v in pairs(b:GetAttributes()) do
