@@ -1,7 +1,7 @@
 --========================================================================
 -- PS99 DIAMOND MOUNTAIN - SUMMIT AFK & YETI BOSS SUITE (DELTA EXECUTOR)
--- Phiên bản V3: Tự động diệt bản cũ khi Excute lại, hỗ trợ Pop-up mở trứng,
--- tối ưu hóa Yeti Boss và tự động nhận diện tên trứng trong hang.
+-- Phiên bản V4: Sửa triệt để lỗi trạng thái Yeti hiển thị sai khi đang Cooldown,
+-- lọc sạch bảng Leaderboard / Pet người chơi, tự động lấy đồng hồ đếm ngược Cooldown.
 --========================================================================
 
 -- 1. DIỆT BẢN CHẠY CŨ KHI BẤM EXCUTE LẠI (KILL PREVIOUS RUNNING INSTANCE)
@@ -32,8 +32,8 @@ local Camera = workspace.CurrentCamera
 
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "💎 PS99 Summit Suite V3",
-        Text = "Đang khởi tạo phiên bản mới nhất...",
+        Title = "💎 PS99 Summit Suite V4",
+        Text = "Đang khởi tạo phiên bản mới...",
         Duration = 3
     })
 end)
@@ -91,7 +91,7 @@ local STATE = {
     YetiCooldownAlert = true,
     IsFightingYeti = false,
     YetiArenaCFrame = nil,
-    YetiStatusText = "Đang quét...",
+    YetiStatusText = "⏳ Đang quét...",
 
     -- [HANG NÚI & TRỨNG]
     SelectedCave = 1,
@@ -244,7 +244,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -60, 1, 0)
 TitleLabel.Position = UDim2.new(0, 12, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "💎 PS99 SUMMIT SUITE V3 | YETI & FARM"
+TitleLabel.Text = "💎 PS99 SUMMIT SUITE V4 | YETI & FARM"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 13
@@ -664,7 +664,7 @@ pcall(function()
 end)
 
 --========================================================================
--- HỆ THỐNG XỬ LÝ NGẦM CHUYÊN SÂU (CHẠY KHI _G.PS99_SUMMIT_RUNNING = TRUE)
+-- HỆ THỐNG XỬ LÝ NGẦM CHUYÊN SÂU
 --========================================================================
 
 task.spawn(function()
@@ -751,49 +751,88 @@ task.spawn(function()
         if h then h.CFrame = cframe + Vector3.new(0, 3, 0) end
     end
 
-    -- QUÉT TÌM YETI BOSS
+    -- BỘ QUÉT TÌM YETI CHÍNH XÁC (KHÔNG BỊ BẮT NHẦM COOLDOWN / LEADERBOARD)
     local function checkYetiBoss()
+        -- 1. Kiểm tra Cooldown trong PlayerGui
+        local isCooldown, cdString = false, nil
+        for _, g in pairs(Player.PlayerGui:GetDescendants()) do
+            if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
+                local t = string.lower(g.Text)
+                if (string.find(t, "yeti") or string.find(t, "abominable")) and 
+                   (string.find(t, "cooldown") or string.find(t, "respawn") or string.find(t, "next") or string.find(t, "starts in") or string.find(t, "start in") or string.find(t, "ends in")) then
+                    isCooldown = true
+                    cdString = string.match(g.Text, "%d+:%d+") or g.Text
+                    break
+                end
+            end
+        end
+
+        if isCooldown then
+            return nil, nil, cdString
+        end
+
+        -- 2. Kiểm tra Breakables thực tế trong workspace.__THINGS.Breakables
         local Things = workspace:FindFirstChild("__THINGS")
         local Breakables = Things and Things:FindFirstChild("Breakables")
         if Breakables then
             for _, b in pairs(Breakables:GetChildren()) do
-                local name = string.lower(b.Name)
-                if string.find(name, "yeti") or string.find(name, "abominable") then
-                    local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
-                    if part then return b, part.CFrame end
+                local isYetiBreakable = false
+                local bName = string.lower(b.Name)
+                if (string.find(bName, "yeti") or string.find(bName, "abominable")) and not string.find(bName, "pet") and not string.find(bName, "egg") and not string.find(bName, "sign") then
+                    isYetiBreakable = true
                 end
-                for k, v in pairs(b:GetAttributes()) do
-                    local str = string.lower(tostring(v))
-                    if string.find(str, "yeti") or string.find(str, "abominable") then
-                        local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
-                        if part then return b, part.CFrame end
+                if not isYetiBreakable then
+                    for k, v in pairs(b:GetAttributes()) do
+                        local str = string.lower(tostring(v))
+                        if (string.find(str, "yeti") or string.find(str, "abominable")) and not string.find(str, "pet") and not string.find(str, "egg") then
+                            isYetiBreakable = true
+                            break
+                        end
                     end
                 end
-            end
-        end
-
-        for _, desc in pairs(workspace:GetDescendants()) do
-            if (desc:IsA("Model") or desc:IsA("BasePart")) and not desc:IsDescendantOf(Player.Character) then
-                local l = string.lower(desc.Name)
-                if string.find(l, "yeti") or string.find(l, "abominable") then
-                    local cf = desc:IsA("BasePart") and desc.CFrame or (desc.PrimaryPart and desc.PrimaryPart.CFrame or desc:FindFirstChildWhichIsA("BasePart") and desc:FindFirstChildWhichIsA("BasePart").CFrame)
-                    if cf then return desc, cf end
+                if isYetiBreakable then
+                    local part = b:IsA("BasePart") and b or (b:IsA("Model") and (b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart")))
+                    if part then return b, part.CFrame, nil end
                 end
             end
         end
 
+        -- 3. Kiểm tra Model Boss trong Workspace (LOẠI BỎ Leaderboard, tượng, pet)
+        for _, obj in pairs(workspace:GetChildren()) do
+            if obj:IsA("Model") then
+                local l = string.lower(obj.Name)
+                if (string.find(l, "yeti") or string.find(l, "abominable"))
+                   and not string.find(l, "leaderboard")
+                   and not string.find(l, "board")
+                   and not string.find(l, "statue")
+                   and not string.find(l, "sign")
+                   and not string.find(l, "egg")
+                   and not string.find(l, "pet")
+                   and not Players:GetPlayerFromCharacter(obj) then
+                    local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                    if part then return obj, part.CFrame, nil end
+                end
+            end
+        end
+
+        -- 4. Kiểm tra Boss Health Bar thực tế (Có thanh máu và KHÔNG PHẢI cooldown)
         for _, g in pairs(Player.PlayerGui:GetDescendants()) do
             if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
                 local t = string.lower(g.Text)
-                if string.find(t, "yeti") or string.find(t, "abominable") then
+                if (string.find(t, "yeti") or string.find(t, "abominable"))
+                   and not string.find(t, "cooldown")
+                   and not string.find(t, "next")
+                   and not string.find(t, "respawn")
+                   and not string.find(t, "leaderboard")
+                   and not string.find(t, "board") then
                     if STATE.YetiArenaCFrame then
-                        return "YetiFromGui", STATE.YetiArenaCFrame
+                        return "YetiActiveFromGui", STATE.YetiArenaCFrame, nil
                     end
                 end
             end
         end
 
-        return nil, nil
+        return nil, nil, nil
     end
 
     local function performAttackYeti(targetObj, targetCFrame)
@@ -832,7 +871,7 @@ task.spawn(function()
         while _G.PS99_SUMMIT_RUNNING do
             task.wait(0.4)
             if STATE.AutoYeti then
-                local yetiObj, yetiPos = checkYetiBoss()
+                local yetiObj, yetiPos, cdTimer = checkYetiBoss()
 
                 if yetiObj and yetiPos then
                     STATE.YetiStatusText = "🔥 Đang Sống!"
@@ -849,7 +888,12 @@ task.spawn(function()
                         performAttackYeti(yetiObj, yetiPos)
                     end
                 else
-                    STATE.YetiStatusText = "Chưa hồi sinh"
+                    if cdTimer then
+                        STATE.YetiStatusText = "⏳ Đang Chờ (" .. cdTimer .. ")"
+                    else
+                        STATE.YetiStatusText = "⏳ Chưa hồi sinh"
+                    end
+
                     if STATE.IsFightingYeti then
                         STATE.IsFightingYeti = false
                         STATE.YetiKilledCount = STATE.YetiKilledCount + 1
@@ -929,7 +973,6 @@ task.spawn(function()
     -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG
     local function handleEggOpeningVisuals()
         pcall(function()
-            -- 1. Bỏ qua cutscene nếu bật SkipAnimation
             if STATE.SkipAnimation then
                 local ps = Player:FindFirstChild("PlayerScripts")
                 local gameScripts = ps and ps:FindFirstChild("Scripts") and ps.Scripts:FindFirstChild("Game")
@@ -944,18 +987,12 @@ task.spawn(function()
                 end
             end
 
-            -- 2. Xử lý Pop-up hiển thị kết quả
             if STATE.ShowHatchPopup then
-                -- Cho phép pop-up hiện lên bình thường để người dùng thấy pet và số lượng
                 local eggOpening = Player.PlayerGui:FindFirstChild("EggOpening")
-                if eggOpening then
-                    eggOpening.Enabled = true
-                end
+                if eggOpening then eggOpening.Enabled = true end
 
-                -- Chờ 1.2 giây cho người dùng xem pet vừa nở
                 task.wait(1.2)
 
-                -- Tự động bấm nút đóng hoặc tap màn hình để kích hoạt quả tiếp theo
                 for _, btn in pairs(Player.PlayerGui:GetDescendants()) do
                     if btn:IsA("TextButton") and (btn.Text == "OK" or btn.Text == "Continue" or btn.Name == "Close" or btn.Name == "Dismiss" or btn.Name == "Next") then
                         if btn.Visible and btn.Parent and btn.Parent.Visible then
@@ -964,14 +1001,12 @@ task.spawn(function()
                     end
                 end
 
-                -- Tap tâm màn hình để đóng pop-up nếu là dạng tap-to-dismiss
                 local vp = Camera.ViewportSize
                 if VirtualUser then
                     VirtualUser:CaptureController()
                     VirtualUser:ClickButton1(Vector2.new(vp.X / 2, vp.Y / 2))
                 end
             else
-                -- Nếu tắt hiển thị pop-up: ép ẩn toàn bộ
                 local eggOpening = Player.PlayerGui:FindFirstChild("EggOpening")
                 if eggOpening then
                     eggOpening.Enabled = false
