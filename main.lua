@@ -389,18 +389,24 @@ local function isCaveOpen(caveNum)
     end
     local eggObj, eggCF, eggId = getCaveEgg(caveNum)
     if eggObj and eggCF and eggId then
-        -- 1. Kiểm tra trạng thái Khóa/Mở từ module EggCmds nội bộ của game
+        -- 1. Kiểm tra trạng thái Khóa/Mở từ module EggCmds nội bộ của game & EggLock
         local isAvailable = true
         if EggCmds then
             pcall(function()
-                if EggCmds.IsEggLocked and EggCmds.IsEggLocked(eggId) then
+                if EggCmds.IsEggAvailable and EggCmds.IsEggAvailable(eggId) == false then
                     isAvailable = false
-                elseif EggCmds.IsEggAvailable and not EggCmds.IsEggAvailable(eggId) then
+                elseif EggCmds.IsUnlocked and EggCmds.IsUnlocked(eggId) == false then
                     isAvailable = false
-                elseif EggCmds.IsUnlocked and not EggCmds.IsUnlocked(eggId) then
+                elseif EggCmds.IsEggLocked and EggCmds.IsEggLocked(eggId) == true then
                     isAvailable = false
                 end
             end)
+        end
+        if isAvailable and eggObj:FindFirstChild("EggLock") then
+            local lockObj = eggObj.EggLock
+            if (lockObj:IsA("BasePart") and lockObj.Transparency < 0.9) or lockObj:IsA("Model") or lockObj:IsA("BillboardGui") then
+                isAvailable = false
+            end
         end
         if not isAvailable then
             return false, "closed", nil, nil, nil

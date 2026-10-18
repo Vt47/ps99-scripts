@@ -102,7 +102,20 @@ for caveNum = 1, 6 do
     if chestName then
         status = "🟢 MỞ - CÓ RƯƠNG: " .. chestName
     elseif eggId then
-        status = "🟢 MỞ - SẴN SÀNG MỞ TRỨNG: " .. eggId
+        local isAvail = false
+        pcall(function()
+            local Lib = RS:FindFirstChild("Library")
+            local Client = Lib and Lib:FindFirstChild("Client")
+            local EC = Client and Client:FindFirstChild("EggCmds") and require(Client.EggCmds)
+            if EC and EC.IsEggAvailable then
+                isAvail = (EC.IsEggAvailable(eggId) == true)
+            end
+        end)
+        if isAvail then
+            status = "🟢 MỞ - SẴN SÀNG MỞ TRỨNG: " .. eggId
+        else
+            status = "🔴 ĐÓNG / COOLDOWN (Trứng đang khóa: " .. eggId .. ")"
+        end
     end
     log(string.format("• Hang %d: %s", caveNum, status))
 end
