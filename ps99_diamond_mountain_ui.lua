@@ -129,6 +129,7 @@ local STATE = {
     MentionOnHuge = true,
     MentionOnTitanic = true,
     ReportInterval = 15 * 60,
+    ExecuteAlert = true,
 
     -- [THỐNG KÊ]
     SessionStart = os.time(),
@@ -179,7 +180,8 @@ local function saveConfig()
             ShowHatchPopup = STATE.ShowHatchPopup,
             SkipAnimation = STATE.SkipAnimation,
             SelectedEggName = STATE.SelectedEggName,
-            TotalHatchedEggs = STATE.TotalHatchedEggs
+            TotalHatchedEggs = STATE.TotalHatchedEggs,
+            ExecuteAlert = STATE.ExecuteAlert
         }
         writefile(CONFIG_FILE, HttpService:JSONEncode(data))
     end)
@@ -221,6 +223,7 @@ local function loadConfig()
         if data.SkipAnimation ~= nil then STATE.SkipAnimation = data.SkipAnimation end
         if data.SelectedEggName and data.SelectedEggName ~= "" then STATE.SelectedEggName = data.SelectedEggName end
         if data.TotalHatchedEggs then STATE.TotalHatchedEggs = tonumber(data.TotalHatchedEggs) or 0 end
+        if data.ExecuteAlert ~= nil then STATE.ExecuteAlert = data.ExecuteAlert end
     end)
 end
 
@@ -939,6 +942,7 @@ end)
 -- TRANG 5: CÀI ĐẶT
 createToggle(SettingsPage, "🛡️ Anti-AFK (Chống văng 20 phút)", STATE.AntiAFK, function(v) STATE.AntiAFK = v end)
 createToggle(SettingsPage, "🔄 Auto Reconnect Khi Đứt Mạng", STATE.AutoReconnect, function(v) STATE.AutoReconnect = v end)
+createToggle(SettingsPage, "🔔 Báo Webhook Khi Mở/Execute Script", STATE.ExecuteAlert, function(v) STATE.ExecuteAlert = v saveConfig() end)
 createToggle(SettingsPage, "🧲 Auto Hút Orbs & Nhặt Lootbags", STATE.AutoCollectDrops, function(v) STATE.AutoCollectDrops = v end)
 createToggle(SettingsPage, "🏆 Auto Nhận Expeditions Đỉnh Núi", STATE.AutoClaimExpeditions, function(v) STATE.AutoClaimExpeditions = v end)
 createToggle(SettingsPage, "🔋 Low CPU Mode (Màn Đen Tiết Kiệm Pin)", STATE.LowCpuMode, function(v)
@@ -1635,6 +1639,42 @@ task.spawn(function()
                 lblDiffDiamonds.Text = (diff >= 0 and "+" or "") .. formatNumber(diff) .. " (" .. formatNumber(rate) .. "/h)"
                 lblUptime.Text = formatDuration(elapsed)
                 lblPets.Text = "🟣 " .. STATE.TotalHuge .. " | 🔴 " .. STATE.TotalTitanic
+            end)
+        end
+    end)
+
+    -- GỬI THÔNG BÁO WEBHOOK KHI EXECUTE THÀNH CÔNG
+    task.spawn(function()
+        task.wait(1.5)
+        if STATE.ExecuteAlert then
+            local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+            local posStr = hrp and string.format("Vector3.new(%.1f, %.1f, %.1f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z) or "Chưa xác định"
+            local desc = string.format(
+                "🟢 **Script đã khởi động và hoạt động thành công!**\n\n" ..
+                "👤 **Tài khoản:** `%s`\n" ..
+                "📍 **Vị trí hiện tại:** `%s`\n" ..
+                "⛰️ **Hang mục tiêu:** `Hang %s`\n" ..
+                "👹 **Auto Săn Yeti:** `%s`\n" ..
+                "📦 **Auto Phá Rương Hang:** `%s`\n" ..
+                "🥚 **Auto Mở Trứng Hang:** `%s`\n" ..
+                "💰 **Auto Cày Tiền:** `%s`\n" ..
+                "🛡️ **Anti-AFK 20m:** `%s`",
+                Player.Name,
+                posStr,
+                tostring(STATE.SelectedCave),
+                STATE.AutoYeti and "🟢 BẬT" or "🔴 TẮT",
+                STATE.AutoCaveChests and "🟢 BẬT" or "🔴 TẮT",
+                STATE.AutoHatch and "🟢 BẬT" or "🔴 TẮT",
+                STATE.AutoFarmMoney and "🟢 BẬT" or "🔴 TẮT",
+                STATE.AntiAFK and "🟢 BẬT" or "🔴 TẮT"
+            )
+            sendWebhook("🚀 EXECUTE SCRIPT THÀNH CÔNG!", desc, 3066993)
+            pcall(function()
+                StarterGui:SetCore("SendNotification", {
+                    Title = "🚀 PS99 Summit Suite",
+                    Text = "Khởi động thành công! Đã gửi thông báo Discord.",
+                    Duration = 4
+                })
             end)
         end
     end)
