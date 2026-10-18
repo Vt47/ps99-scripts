@@ -1,7 +1,15 @@
 --========================================================================
 -- PS99 DIAMOND MOUNTAIN - SUMMIT AFK & YETI BOSS SUITE (DELTA EXECUTOR)
--- Phiên bản V2: Sửa triệt để lỗi Yeti Boss, Auto Click, và Auto Hatch không pop-up
+-- Phiên bản V3: Tự động diệt bản cũ khi Excute lại, hỗ trợ Pop-up mở trứng,
+-- tối ưu hóa Yeti Boss và tự động nhận diện tên trứng trong hang.
 --========================================================================
+
+-- 1. DIỆT BẢN CHẠY CŨ KHI BẤM EXCUTE LẠI (KILL PREVIOUS RUNNING INSTANCE)
+if _G.PS99_SUMMIT_RUNNING then
+    _G.PS99_SUMMIT_RUNNING = false
+    task.wait(0.3)
+end
+_G.PS99_SUMMIT_RUNNING = true
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -22,16 +30,15 @@ local CoreGui = game:GetService("CoreGui")
 local Player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local Camera = workspace.CurrentCamera
 
--- Bật thông báo
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "💎 PS99 Summit Suite V2",
-        Text = "Đang khởi tạo giao diện...",
+        Title = "💎 PS99 Summit Suite V3",
+        Text = "Đang khởi tạo phiên bản mới nhất...",
         Duration = 3
     })
 end)
 
--- Tìm nơi chứa GUI cho Delta Executor
+-- Tìm nơi chứa GUI cho Delta Executor (gethui > CoreGui > PlayerGui)
 local function getSafeGuiParent()
     if typeof(gethui) == "function" then
         local h = gethui()
@@ -51,9 +58,17 @@ end
 
 local GuiParent = getSafeGuiParent()
 
+-- Dọn dẹp tất cả UI cũ nếu có
 pcall(function()
-    for _, item in pairs(GuiParent:GetChildren()) do
-        if item.Name == "PS99_Summit_Suite" then item:Destroy() end
+    local containers = {}
+    if typeof(gethui) == "function" then table.insert(containers, gethui()) end
+    if game:GetService("CoreGui") then table.insert(containers, game:GetService("CoreGui")) end
+    if Player:FindFirstChild("PlayerGui") then table.insert(containers, Player.PlayerGui) end
+
+    for _, c in ipairs(containers) do
+        for _, child in pairs(c:GetChildren()) do
+            if child.Name == "PS99_Summit_Suite" then child:Destroy() end
+        end
     end
 end)
 
@@ -75,14 +90,15 @@ local STATE = {
     YetiKilledCount = 0,
     YetiCooldownAlert = true,
     IsFightingYeti = false,
-    YetiArenaCFrame = nil,        -- Tọa độ đấu trường Yeti (có thể lưu tùy chỉnh)
+    YetiArenaCFrame = nil,
     YetiStatusText = "Đang quét...",
 
     -- [HANG NÚI & TRỨNG]
     SelectedCave = 1,
     AutoCaveChests = false,
     AutoHatch = false,
-    SkipAnimation = true,
+    ShowHatchPopup = true,       -- Hiện pop-up kết quả đã mở được bao nhiêu trứng
+    SkipAnimation = true,        -- Bỏ qua hoạt ảnh cắt cảnh
     SelectedEggName = "Nearest",
     HatchAmount = 1,
 
@@ -128,7 +144,6 @@ local STATE = {
 -- GIAO DIỆN NGƯỜI DÙNG (UI)
 --========================================================================
 
--- Nút tròn nổi
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Name = "ToggleButton"
 ToggleButton.Size = UDim2.new(0, 50, 0, 50)
@@ -169,11 +184,10 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Khung chính
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-MainFrame.Size = UDim2.new(0, 500, 0, 350)
+MainFrame.Size = UDim2.new(0, 510, 0, 360)
 MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 28)
 MainFrame.BorderSizePixel = 0
@@ -230,7 +244,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -60, 1, 0)
 TitleLabel.Position = UDim2.new(0, 12, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "💎 PS99 SUMMIT SUITE V2 | YETI & FARM"
+TitleLabel.Text = "💎 PS99 SUMMIT SUITE V3 | YETI & FARM"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 13
@@ -269,7 +283,6 @@ local SidebarPad = Instance.new("UIPadding")
 SidebarPad.PaddingTop = UDim.new(0, 8)
 SidebarPad.Parent = Sidebar
 
--- Content Container
 local ContentContainer = Instance.new("Frame")
 ContentContainer.Size = UDim2.new(1, -135, 1, -50)
 ContentContainer.Position = UDim2.new(0, 130, 0, 46)
@@ -285,7 +298,7 @@ local function createPage(name)
     Page.ScrollBarThickness = 4
     Page.ScrollBarImageColor3 = Color3.fromRGB(80, 140, 255)
     Page.Visible = false
-    Page.CanvasSize = UDim2.new(0, 0, 0, 420)
+    Page.CanvasSize = UDim2.new(0, 0, 0, 440)
     Page.Parent = ContentContainer
 
     local Layout = Instance.new("UIListLayout")
@@ -496,7 +509,7 @@ createActionButton(TrailsPage, "🔍 Quét Quả Trứng Đang Đứng Trước 
     local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
     local found = nil
     if hrp and EggsFolder then
-        local minDist = 80
+        local minDist = 90
         for _, egg in pairs(EggsFolder:GetChildren()) do
             local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart")))
             if part then
@@ -522,7 +535,7 @@ createActionButton(TrailsPage, "🔍 Quét Quả Trứng Đang Đứng Trước 
         pcall(function()
             StarterGui:SetCore("SendNotification", {
                 Title = "🥚 Đã Tìm Thấy Trứng!",
-                Text = "Đã ghim: " .. found,
+                Text = "Đã chọn: " .. found,
                 Duration = 3
             })
         end)
@@ -530,7 +543,7 @@ createActionButton(TrailsPage, "🔍 Quét Quả Trứng Đang Đứng Trước 
         pcall(function()
             StarterGui:SetCore("SendNotification", {
                 Title = "⚠️ Chưa Thấy Trứng",
-                Text = "Hãy đứng lại gần quả trứng trong hang rồi bấm lại nút này nhé!",
+                Text = "Hãy đứng lại sát quả trứng trong hang rồi bấm lại nút này nhé!",
                 Duration = 3
             })
         end)
@@ -605,8 +618,9 @@ createActionButton(TrailsPage, "🚀 Teleport Tới Hang Đã Chọn Ngay", Colo
 end)
 
 createToggle(TrailsPage, "📦 Auto Phá Rương (Chests) Trong Hang", STATE.AutoCaveChests, function(v) STATE.AutoCaveChests = v end)
-createToggle(TrailsPage, "🥚 Auto Mở Trứng Liên Tục (Auto Hatch)", STATE.AutoHatch, function(v) STATE.AutoHatch = v end)
-createToggle(TrailsPage, "⏩ Tắt Animation & Chặn Toàn Bộ Pop-Up Trứng", STATE.SkipAnimation, function(v) STATE.SkipAnimation = v end)
+createToggle(TrailsPage, "🥚 Auto Mở Trứng (Auto Hatch Egg)", STATE.AutoHatch, function(v) STATE.AutoHatch = v end)
+createToggle(TrailsPage, "🎁 Hiện Pop-up Kết Quả (Tự đóng sau 1.2s)", STATE.ShowHatchPopup, function(v) STATE.ShowHatchPopup = v end)
+createToggle(TrailsPage, "⏩ Bỏ Qua Cắt Cảnh (Skip Cutscene Animation)", STATE.SkipAnimation, function(v) STATE.SkipAnimation = v end)
 
 -- TRANG 4: BÃI FARM TIỀN
 createToggle(FarmPage, "💰 Tự Động Về Farm Tiền (Khi không mở trứng)", STATE.AutoFarmMoney, function(v) STATE.AutoFarmMoney = v end)
@@ -650,7 +664,7 @@ pcall(function()
 end)
 
 --========================================================================
--- HỆ THỐNG XỬ LÝ NGẦM CHUYÊN SÂU
+-- HỆ THỐNG XỬ LÝ NGẦM CHUYÊN SÂU (CHẠY KHI _G.PS99_SUMMIT_RUNNING = TRUE)
 --========================================================================
 
 task.spawn(function()
@@ -679,7 +693,6 @@ task.spawn(function()
         end)
     end
 
-    -- Nạp modules PS99
     local Library, Client, Directory, Save, PetDirectory, Network
     pcall(function()
         Library = RS:WaitForChild("Library", 8)
@@ -738,9 +751,8 @@ task.spawn(function()
         if h then h.CFrame = cframe + Vector3.new(0, 3, 0) end
     end
 
-    -- TÌM VÀ NHẬN DIỆN YETI (QUÉT ĐA TẦNG: WORKSPACE + BREAKABLES + GUI)
+    -- QUÉT TÌM YETI BOSS
     local function checkYetiBoss()
-        -- 1. Quét Breakables (Bằng Name và GetAttributes)
         local Things = workspace:FindFirstChild("__THINGS")
         local Breakables = Things and Things:FindFirstChild("Breakables")
         if Breakables then
@@ -760,7 +772,6 @@ task.spawn(function()
             end
         end
 
-        -- 2. Quét trong Workspace Models
         for _, desc in pairs(workspace:GetDescendants()) do
             if (desc:IsA("Model") or desc:IsA("BasePart")) and not desc:IsDescendantOf(Player.Character) then
                 local l = string.lower(desc.Name)
@@ -771,12 +782,10 @@ task.spawn(function()
             end
         end
 
-        -- 3. Quét Boss Health Bar trong PlayerGui
         for _, g in pairs(Player.PlayerGui:GetDescendants()) do
             if (g:IsA("TextLabel") or g:IsA("TextButton")) and g.Visible then
                 local t = string.lower(g.Text)
                 if string.find(t, "yeti") or string.find(t, "abominable") then
-                    -- Yeti đang sống trên server! Nếu đã lưu đấu trường thì trả về
                     if STATE.YetiArenaCFrame then
                         return "YetiFromGui", STATE.YetiArenaCFrame
                     end
@@ -787,9 +796,7 @@ task.spawn(function()
         return nil, nil
     end
 
-    -- TỰ ĐỘNG CLICK / TẤN CÔNG VÀO YETI
     local function performAttackYeti(targetObj, targetCFrame)
-        -- 1. Gửi lệnh tấn công qua Network Remote
         if Network and Network.Fire then
             pcall(function()
                 if typeof(targetObj) == "Instance" then
@@ -799,14 +806,12 @@ task.spawn(function()
             end)
         end
 
-        -- 2. Hướng Camera thẳng vào Yeti
         pcall(function()
             if targetCFrame and Camera then
                 Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetCFrame.Position)
             end
         end)
 
-        -- 3. Click chuột / Tap cảm ứng vào giữa màn hình
         pcall(function()
             local vp = Camera.ViewportSize
             local center = Vector2.new(vp.X / 2, vp.Y / 2)
@@ -822,9 +827,9 @@ task.spawn(function()
         end)
     end
 
-    -- VÒNG LẶP ĐIỀU PHỐI YETI BOSS
+    -- VÒNG LẶP SĂN YETI
     task.spawn(function()
-        while true do
+        while _G.PS99_SUMMIT_RUNNING do
             task.wait(0.4)
             if STATE.AutoYeti then
                 local yetiObj, yetiPos = checkYetiBoss()
@@ -834,7 +839,6 @@ task.spawn(function()
                     if not STATE.IsFightingYeti then
                         STATE.IsFightingYeti = true
                         STATE.CurrentAction = "⚔️ Đang săn Yeti Boss!"
-                        -- Tự lưu vị trí này làm đấu trường nếu chưa có
                         if not STATE.YetiArenaCFrame and typeof(yetiPos) == "CFrame" then
                             STATE.YetiArenaCFrame = yetiPos
                         end
@@ -847,7 +851,6 @@ task.spawn(function()
                 else
                     STATE.YetiStatusText = "Chưa hồi sinh"
                     if STATE.IsFightingYeti then
-                        -- Yeti vừa bị đánh bại!
                         STATE.IsFightingYeti = false
                         STATE.YetiKilledCount = STATE.YetiKilledCount + 1
                         STATE.CurrentAction = "🏆 Yeti đã bị hạ gục!"
@@ -862,7 +865,6 @@ task.spawn(function()
 
                         task.wait(1.5)
 
-                        -- ĐIỀU KIỆN TELEPORT SAU KHI YETI CHẾT
                         if STATE.AutoHatch then
                             local cavePos = STATE.CaveCFrames[STATE.SelectedCave]
                             if cavePos then
@@ -889,8 +891,8 @@ task.spawn(function()
         end
     end)
 
-    -- TÌM TÊN TRỨNG GẦN NHẤT
-    local function getAutoEggName()
+    -- TÌM TÊN TRỨNG CHÍNH XÁC TRONG HANG
+    local function getRealEggName()
         if STATE.SelectedEggName and STATE.SelectedEggName ~= "Nearest" and STATE.SelectedEggName ~= "" then
             return STATE.SelectedEggName
         end
@@ -899,7 +901,7 @@ task.spawn(function()
         local EggsFolder = Things and Things:FindFirstChild("Eggs")
         local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
         if hrp and EggsFolder then
-            local nearest, minDist = nil, 70
+            local nearest, minDist = nil, 90
             for _, egg in pairs(EggsFolder:GetChildren()) do
                 local part = egg:IsA("BasePart") and egg or (egg:IsA("Model") and (egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart")))
                 if part then
@@ -915,70 +917,92 @@ task.spawn(function()
 
         for _, obj in pairs(workspace:GetChildren()) do
             if obj:IsA("Model") and string.find(string.lower(obj.Name), "egg") then
-                return obj.Name
+                local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                if part and hrp and (part.Position - hrp.Position).Magnitude < 90 then
+                    return obj.Name
+                end
             end
         end
         return nil
     end
 
-    -- CHẶN TRIỆT ĐỂ POP-UP KẾT QUẢ VÀ ANIMATION MỞ TRỨNG
-    local function suppressEggPopups()
+    -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG
+    local function handleEggOpeningVisuals()
         pcall(function()
-            -- 1. Ẩn GUI EggOpening
-            local eggOpening = Player.PlayerGui:FindFirstChild("EggOpening")
-            if eggOpening then
-                eggOpening.Enabled = false
-                for _, el in pairs(eggOpening:GetDescendants()) do
-                    if el:IsA("GuiObject") then el.Visible = false end
-                end
-            end
-
-            -- 2. Ẩn tất cả các bảng thông báo pop-up nở trứng
-            for _, g in pairs(Player.PlayerGui:GetChildren()) do
-                if g:IsA("ScreenGui") and (string.find(string.lower(g.Name), "egg") or string.find(string.lower(g.Name), "hatch")) then
-                    g.Enabled = false
-                end
-            end
-
-            -- 3. Tự động bấm nút đóng nếu có pop-up hiện lên
-            for _, btn in pairs(Player.PlayerGui:GetDescendants()) do
-                if btn:IsA("TextButton") and (btn.Text == "OK" or btn.Text == "Continue" or btn.Name == "Close" or btn.Name == "Dismiss") then
-                    if btn.Visible then
-                        btn.MouseButton1Click:Fire()
+            -- 1. Bỏ qua cutscene nếu bật SkipAnimation
+            if STATE.SkipAnimation then
+                local ps = Player:FindFirstChild("PlayerScripts")
+                local gameScripts = ps and ps:FindFirstChild("Scripts") and ps.Scripts:FindFirstChild("Game")
+                if gameScripts then
+                    local eggFrontend = gameScripts:FindFirstChild("Egg Opening Frontend")
+                    if eggFrontend and getsenv then
+                        local env = getsenv(eggFrontend)
+                        if env and env.PlayEggAnimation then
+                            env.PlayEggAnimation = function() return end
+                        end
                     end
                 end
             end
 
-            -- 4. Hook PlayEggAnimation
-            local ps = Player:FindFirstChild("PlayerScripts")
-            local gameScripts = ps and ps:FindFirstChild("Scripts") and ps.Scripts:FindFirstChild("Game")
-            if gameScripts then
-                local eggFrontend = gameScripts:FindFirstChild("Egg Opening Frontend")
-                if eggFrontend and getsenv then
-                    local env = getsenv(eggFrontend)
-                    if env then
-                        if env.PlayEggAnimation then env.PlayEggAnimation = function() return end end
-                        if env.ShowEggResults then env.ShowEggResults = function() return end end
+            -- 2. Xử lý Pop-up hiển thị kết quả
+            if STATE.ShowHatchPopup then
+                -- Cho phép pop-up hiện lên bình thường để người dùng thấy pet và số lượng
+                local eggOpening = Player.PlayerGui:FindFirstChild("EggOpening")
+                if eggOpening then
+                    eggOpening.Enabled = true
+                end
+
+                -- Chờ 1.2 giây cho người dùng xem pet vừa nở
+                task.wait(1.2)
+
+                -- Tự động bấm nút đóng hoặc tap màn hình để kích hoạt quả tiếp theo
+                for _, btn in pairs(Player.PlayerGui:GetDescendants()) do
+                    if btn:IsA("TextButton") and (btn.Text == "OK" or btn.Text == "Continue" or btn.Name == "Close" or btn.Name == "Dismiss" or btn.Name == "Next") then
+                        if btn.Visible and btn.Parent and btn.Parent.Visible then
+                            pcall(function() btn.MouseButton1Click:Fire() end)
+                        end
+                    end
+                end
+
+                -- Tap tâm màn hình để đóng pop-up nếu là dạng tap-to-dismiss
+                local vp = Camera.ViewportSize
+                if VirtualUser then
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton1(Vector2.new(vp.X / 2, vp.Y / 2))
+                end
+            else
+                -- Nếu tắt hiển thị pop-up: ép ẩn toàn bộ
+                local eggOpening = Player.PlayerGui:FindFirstChild("EggOpening")
+                if eggOpening then
+                    eggOpening.Enabled = false
+                    for _, el in pairs(eggOpening:GetDescendants()) do
+                        if el:IsA("GuiObject") then el.Visible = false end
+                    end
+                end
+                for _, g in pairs(Player.PlayerGui:GetChildren()) do
+                    if g:IsA("ScreenGui") and (string.find(string.lower(g.Name), "egg") or string.find(string.lower(g.Name), "hatch")) then
+                        g.Enabled = false
                     end
                 end
             end
         end)
     end
 
-    -- VÒNG LẶP AUTO HATCH TRỨNG LIÊN TỤC (KHÔNG BỊ DỪNG)
+    -- VÒNG LẶP AUTO HATCH TRỨNG LIÊN TỤC
     task.spawn(function()
-        while true do
-            task.wait(0.25)
+        while _G.PS99_SUMMIT_RUNNING do
+            task.wait(0.3)
             if STATE.AutoHatch and not STATE.IsFightingYeti then
-                if STATE.SkipAnimation then
-                    suppressEggPopups()
-                end
+                local realEgg = getRealEggName()
 
-                local targetEgg = getAutoEggName()
-                if targetEgg and Network and Network.Invoke then
+                if realEgg and realEgg ~= "Nearest" and Network and Network.Invoke then
                     pcall(function()
-                        Network.Invoke("Eggs_RequestPurchase", targetEgg, STATE.HatchAmount or 1)
+                        Network.Invoke("Eggs_RequestPurchase", realEgg, STATE.HatchAmount or 1)
                     end)
+
+                    handleEggOpeningVisuals()
+                else
+                    task.wait(1)
                 end
             end
         end
@@ -986,7 +1010,7 @@ task.spawn(function()
 
     -- VÒNG LẶP PHÁ RƯƠNG TRONG HANG
     task.spawn(function()
-        while true do
+        while _G.PS99_SUMMIT_RUNNING do
             task.wait(0.4)
             if STATE.AutoCaveChests and not STATE.IsFightingYeti then
                 pcall(function()
@@ -1018,9 +1042,9 @@ task.spawn(function()
         end
     end)
 
-    -- VÒNG LẶP CÀY TIỀN TẠI BÃI FARM
+    -- VÒNG LẶP FARM TIỀN
     task.spawn(function()
-        while true do
+        while _G.PS99_SUMMIT_RUNNING do
             task.wait(0.4)
             if STATE.AutoFarmMoney and not STATE.AutoHatch and not STATE.IsFightingYeti then
                 pcall(function()
@@ -1051,7 +1075,7 @@ task.spawn(function()
 
     -- HÚT ORBS & LOOTBAGS
     task.spawn(function()
-        while true do
+        while _G.PS99_SUMMIT_RUNNING do
             task.wait(0.4)
             if STATE.AutoCollectDrops then
                 pcall(function()
@@ -1080,7 +1104,7 @@ task.spawn(function()
 
     -- Anti-AFK
     Player.Idled:Connect(function()
-        if STATE.AntiAFK and VirtualUser then
+        if STATE.AntiAFK and _G.PS99_SUMMIT_RUNNING and VirtualUser then
             pcall(function()
                 VirtualUser:CaptureController()
                 VirtualUser:ClickButton2(Vector2.new())
@@ -1091,7 +1115,7 @@ task.spawn(function()
     -- Auto Reconnect
     pcall(function()
         GuiService.ErrorMessageChanged:Connect(function()
-            if STATE.AutoReconnect and GuiService:GetErrorCode().Value > 0 then
+            if STATE.AutoReconnect and _G.PS99_SUMMIT_RUNNING and GuiService:GetErrorCode().Value > 0 then
                 sendWebhook("⚠️ MẤT KẾT NỐI", "Đang thử Reconnect vào server sau 10 giây...", 15158332)
                 task.wait(10)
                 TeleportService:Teleport(game.PlaceId, Player)
@@ -1099,9 +1123,9 @@ task.spawn(function()
         end)
     end)
 
-    -- Vòng lặp cập nhật Dashboard
+    -- CẬP NHẬT DASHBOARD
     task.spawn(function()
-        while true do
+        while _G.PS99_SUMMIT_RUNNING do
             task.wait(1)
             pcall(function()
                 lblAction.Text = STATE.CurrentAction
