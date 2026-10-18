@@ -102,19 +102,39 @@ for caveNum = 1, 6 do
     if chestName then
         status = "🟢 MỞ - CÓ RƯƠNG: " .. chestName
     elseif eggId then
-        local isAvail = false
+        local isCd = false
+        local isUnl = false
+        local signInfo = ""
         pcall(function()
-            local Lib = RS:FindFirstChild("Library")
-            local Client = Lib and Lib:FindFirstChild("Client")
-            local EC = Client and Client:FindFirstChild("EggCmds") and require(Client.EggCmds)
-            if EC and EC.IsEggAvailable then
-                isAvail = (EC.IsEggAvailable(eggId) == true)
+            for _, bb in pairs(workspace:GetDescendants()) do
+                if (bb:IsA("BillboardGui") or bb:IsA("SurfaceGui")) and bb.Enabled then
+                    local pName = bb.Parent and bb.Parent.Name or ""
+                    local gpName = (bb.Parent and bb.Parent.Parent) and bb.Parent.Parent.Name or ""
+                    if gpName == tostring(caveNum) or string.find(string.lower(gpName), "trail" .. tostring(caveNum))
+                       or pName == tostring(caveNum) or string.find(string.lower(pName), "trail" .. tostring(caveNum)) then
+                        for _, tl in pairs(bb:GetDescendants()) do
+                            if tl:IsA("TextLabel") and tl.Visible and tl.Text ~= "" then
+                                local lTxt = string.lower(tl.Text)
+                                if string.find(lTxt, "unlocked") then
+                                    isUnl = true
+                                    signInfo = tl.Text
+                                elseif string.find(lTxt, "next roll") or string.find(lTxt, "cooldown") or string.find(lTxt, "returns in") then
+                                    isCd = true
+                                    signInfo = tl.Text
+                                end
+                            end
+                        end
+                    end
+                end
             end
         end)
-        if isAvail then
-            status = "🟢 MỞ - SẴN SÀNG MỞ TRỨNG: " .. eggId
+
+        if isCd then
+            status = "🔴 ĐÓNG / COOLDOWN (" .. (signInfo ~= "" and signInfo or "Đang chờ hồi") .. ")"
+        elseif isUnl then
+            status = "🟢 MỞ - SẴN SÀNG MỞ TRỨNG: " .. eggId .. " (" .. signInfo .. ")"
         else
-            status = "🔴 ĐÓNG / COOLDOWN (Trứng đang khóa: " .. eggId .. ")"
+            status = "🟢 MỞ - SẴN SÀNG MỞ TRỨNG: " .. eggId
         end
     end
     log(string.format("• Hang %d: %s", caveNum, status))
