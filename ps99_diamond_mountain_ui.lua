@@ -542,8 +542,21 @@ local function getCaveEggModel(caveNum)
     local expectedEggName = CAVE_DEFAULT_EGGS[caveNum]
     local caveCF = STATE.CaveCFrames[caveNum]
 
+    -- Hàm lấy CFrame an toàn (Tuyệt đối không gọi GetPivot trên Highlight hay đối tượng phi vật lý)
+    local function getEggCFrame(egg)
+        if not egg or (not egg:IsA("Model") and not egg:IsA("BasePart")) then return nil end
+        local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or getPartFromInstance(egg)
+        if part then return part.CFrame end
+        if egg:IsA("Model") then
+            local ok, piv = pcall(function() return egg:GetPivot() end)
+            if ok and piv then return piv end
+        end
+        return nil
+    end
+
     -- Hàm nhận diện trứng mua bằng Acorns bên ngoài núi (BẮT BUỘC LOẠI BỎ)
     local function isOutsideAcornEgg(egg)
+        if not egg:IsA("Model") and not egg:IsA("BasePart") then return true end
         if egg:FindFirstChild("Acorns", true) then return true end
         if egg:GetAttribute("DM_GargRow") ~= nil then return true end
         for _, desc in pairs(egg:GetDescendants()) do
@@ -556,24 +569,11 @@ local function getCaveEggModel(caveNum)
 
     -- ƯU TIÊN SỐ 1 TUYỆT ĐỐI: Khớp DM_TrailEgg == caveNum (Đây chính là quả trứng nằm trong Hang / Trail!)
     for _, egg in pairs(CustomEggs:GetChildren()) do
-        local trailNum = egg:GetAttribute("DM_TrailEgg")
-        if trailNum and tonumber(trailNum) == tonumber(caveNum) then
-            local attrEggId = egg:GetAttribute("DM_EggId")
-            local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
-            local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
-            local cf = part and part.CFrame or egg:GetPivot()
-            return egg, cf, cleanEggName
-        end
-    end
-
-    -- ƯU TIÊN SỐ 2: Quả trứng nằm trong bán kính 120 studs quanh Rương Hang (chắc chắn ở trong Hang)
-    if caveCF then
-        for _, egg in pairs(CustomEggs:GetChildren()) do
-            if not isOutsideAcornEgg(egg) then
-                local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
-                local cf = part and part.CFrame or egg:GetPivot()
-                local dist = (cf.Position - caveCF.Position).Magnitude
-                if dist < 120 then
+        if egg:IsA("Model") or egg:IsA("BasePart") then
+            local trailNum = egg:GetAttribute("DM_TrailEgg")
+            if trailNum and tonumber(trailNum) == tonumber(caveNum) then
+                local cf = getEggCFrame(egg)
+                if cf then
                     local attrEggId = egg:GetAttribute("DM_EggId")
                     local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
                     return egg, cf, cleanEggName
@@ -582,17 +582,35 @@ local function getCaveEggModel(caveNum)
         end
     end
 
+    -- ƯU TIÊN SỐ 2: Quả trứng nằm trong bán kính 120 studs quanh Rương Hang (chắc chắn ở trong Hang)
+    if caveCF then
+        for _, egg in pairs(CustomEggs:GetChildren()) do
+            if (egg:IsA("Model") or egg:IsA("BasePart")) and not isOutsideAcornEgg(egg) then
+                local cf = getEggCFrame(egg)
+                if cf then
+                    local dist = (cf.Position - caveCF.Position).Magnitude
+                    if dist < 120 then
+                        local attrEggId = egg:GetAttribute("DM_EggId")
+                        local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
+                        return egg, cf, cleanEggName
+                    end
+                end
+            end
+        end
+    end
+
     -- ƯU TIÊN SỐ 3: Tìm quả trứng khớp tên nhưng BẮT BUỘC KHÔNG PHẢI trứng Acorns ngoài núi
     for _, egg in pairs(CustomEggs:GetChildren()) do
-        if not isOutsideAcornEgg(egg) then
+        if (egg:IsA("Model") or egg:IsA("BasePart")) and not isOutsideAcornEgg(egg) then
             local attrEggId = egg:GetAttribute("DM_EggId")
             local nameMatch = (expectedEggName and attrEggId and string.lower(tostring(attrEggId)) == string.lower(expectedEggName))
                            or (expectedEggName and string.lower(tostring(egg.Name)) == string.lower(expectedEggName))
             if nameMatch then
-                local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
-                local cf = part and part.CFrame or egg:GetPivot()
-                local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
-                return egg, cf, cleanEggName
+                local cf = getEggCFrame(egg)
+                if cf then
+                    local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
+                    return egg, cf, cleanEggName
+                end
             end
         end
     end
@@ -602,7 +620,7 @@ end
 
 -- Kiểm tra xem Trứng có đang mở (không bị khóa bởi TextLabel 'Locked', PriceHUDLocked)
 local function isEggUnlocked(eggObj)
-    if not eggObj or not eggObj.Parent then return false end
+    if not eggObj or not eggObj.Parent or (not eggObj:IsA("Model") and not eggObj:IsA("BasePart")) then return false end
 
     local isLocked = false
     pcall(function()
