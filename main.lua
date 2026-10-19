@@ -507,6 +507,16 @@ local function getMaxHatchAmount()
     return math.max(1, maxAmt or 58)
 end
 
+-- Bảng tên trứng mặc định của 6 Hang Núi Kim Cương
+local CAVE_DEFAULT_EGGS = {
+    [1] = "Frosted Geode Egg",
+    [2] = "Diamond Cat Egg",
+    [3] = "Diamond Dog Egg",
+    [4] = "Eagle Crag Egg",
+    [5] = "Frostline Egg",
+    [6] = "Diamond Summit Egg",
+}
+
 -- Lấy Model gốc của Trứng trong Workspace (Dùng để quét tên / tọa độ bất kể khóa hay mở)
 local function getCaveEggModel(caveNum)
     caveNum = tonumber(caveNum) or STATE.SelectedCave
@@ -514,6 +524,23 @@ local function getCaveEggModel(caveNum)
     local CustomEggs = Things and Things:FindFirstChild("CustomEggs")
     if not CustomEggs then return nil, nil, nil end
 
+    local expectedEggName = CAVE_DEFAULT_EGGS[caveNum]
+
+    -- Ưu tiên 1: Quả trứng thường trong CustomEggs (BỎ QUA HugeRow/TitanicRow)
+    for _, egg in pairs(CustomEggs:GetChildren()) do
+        local isHugeRow = (egg:GetAttribute("DM_TrailHugeRow") == true or egg:GetAttribute("DM_TrailTitanicRow") == true)
+        if not isHugeRow then
+            local trailNum = egg:GetAttribute("DM_TrailEgg")
+            local eggId = tostring(egg:GetAttribute("DM_EggId") or egg.Name)
+            if (trailNum and tonumber(trailNum) == tonumber(caveNum)) or (expectedEggName and eggId == expectedEggName) then
+                local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
+                local cf = part and part.CFrame or egg:GetPivot()
+                return egg, cf, eggId
+            end
+        end
+    end
+
+    -- Ưu tiên 2: Bất kỳ trứng nào khớp DM_TrailEgg
     for _, egg in pairs(CustomEggs:GetChildren()) do
         local trailNum = egg:GetAttribute("DM_TrailEgg")
         if trailNum and tonumber(trailNum) == tonumber(caveNum) then
@@ -524,7 +551,7 @@ local function getCaveEggModel(caveNum)
         end
     end
 
-    return nil, nil, nil
+    return nil, nil, expectedEggName
 end
 
 -- Kiểm tra xem Trứng có đang mở (không bị khóa bởi PriceHUDLocked, EggLock, TextLabel 'Locked')
@@ -533,7 +560,7 @@ local function isEggUnlocked(eggObj)
 
     local isLocked = false
     pcall(function()
-        -- 1. Kiểm tra TextLabel có chữ "Locked"
+        -- 1. Nếu có TextLabel chữ "Locked" đang hiển thị -> Bị khóa
         for _, desc in pairs(eggObj:GetDescendants()) do
             if desc:IsA("TextLabel") and desc.Visible and string.find(string.lower(desc.Text), "locked") then
                 isLocked = true
@@ -546,16 +573,16 @@ local function isEggUnlocked(eggObj)
                 elseif desc:IsA("GuiObject") and desc.Visible then
                     isLocked = true
                     return
-                elseif desc:IsA("BasePart") and desc.Transparency < 1 then
+                elseif desc:IsA("BasePart") and desc.Transparency < 0.5 then
                     isLocked = true
                     return
                 end
             end
         end
 
-        -- 2. Kiểm tra ổ khóa EggLock (MeshPart)
+        -- 2. Kiểm tra ổ khóa EggLock (khi khóa thường rõ ràng với Transparency = 0)
         local eggLock = eggObj:FindFirstChild("EggLock", true)
-        if eggLock and eggLock:IsA("BasePart") and eggLock.Transparency < 0.6 then
+        if eggLock and eggLock:IsA("BasePart") and eggLock.Transparency < 0.3 then
             isLocked = true
             return
         end
@@ -608,10 +635,10 @@ local function getCaveSignInfo(caveNum)
         end
     end)
 
-    -- Tự động reset cờ chu kỳ đã mở trứng nếu hang đã hết cooldown hoặc rương xuất hiện
-    if (isUnlocked or not isCooldown) and STATE.CaveHatchedForThisCycle and STATE.CaveHatchedForThisCycle[caveNum] then
+    -- Tự động reset cờ chu kỳ đã mở trứng khi rương Boss mới xuất hiện trong hang
+    if STATE.CaveHatchedForThisCycle and STATE.CaveHatchedForThisCycle[caveNum] then
         local cObj = getCaveChest(caveNum)
-        if cObj or isUnlocked then
+        if cObj then
             STATE.CaveHatchedForThisCycle[caveNum] = false
         end
     end
@@ -619,7 +646,7 @@ local function getCaveSignInfo(caveNum)
     return isUnlocked, isCooldown, remainingSec, signText
 end
 
--- Lấy đối tượng Trứng Hang (CHỈ TRẢ VỀ KHI TRỨNG THẬT SỰ MỞ & KHÔNG BỊ KHÓA & KHÔNG COOLDOWN)
+-- Lấy đối tượng Trứng Hang (CHỈ TRẢ VỀ KHI TRỨNG THẬT SỰ MỞ & KHÔNG BỊ KHÓA)
 local function getCaveEgg(caveNum)
     caveNum = tonumber(caveNum) or STATE.SelectedCave
 
@@ -634,19 +661,13 @@ local function getCaveEgg(caveNum)
         return nil, nil, nil
     end
 
-    -- 3. Kiểm tra Biển báo Cooldown của Hang
-    local isUnlocked, isCooldown, remSec, signText = getCaveSignInfo(caveNum)
-    if isCooldown then
-        return nil, nil, nil
-    end
-
-    -- 4. Tìm Model Trứng
+    -- 3. Tìm Model Trứng thường của Hang
     local eggObj, eggCF, eggId = getCaveEggModel(caveNum)
     if not eggObj or not eggCF then
         return nil, nil, nil
     end
 
-    -- 5. Kiểm tra Trứng có bị Khóa (Locked) hay không
+    -- 4. Kiểm tra Trứng có bị Khóa (Locked) hay không
     if not isEggUnlocked(eggObj) then
         return nil, nil, nil
     end
@@ -1984,6 +2005,7 @@ task.spawn(function()
     end
 
     -- XỬ LÝ HANG KHI COOLDOWN
+    local lastFarmLogTime = 0
     local function handleCaveCooldown(targetCave, hrp)
         local yetiObj, yetiPos = checkYetiBoss()
         if STATE.AutoYeti and yetiObj and yetiPos then
@@ -1997,8 +2019,12 @@ task.spawn(function()
             STATE.CurrentAction = "⏳ Chờ Hang " .. targetCave .. " hồi chiêu... Đang cày tiền bãi farm"
             if STATE.FarmCFrame then
                 local dist = (STATE.FarmCFrame.Position - hrp.Position).Magnitude
-                if dist > 35 then
-                    logActivity("BÃI_FARM", "Hang " .. targetCave .. " đang hồi chiêu. Dịch chuyển về bãi farm cày tiền.")
+                -- Chỉ teleport khi nhân vật cách xa bãi farm hơn 90 studs (từ trong hang ra bãi)
+                if dist > 90 then
+                    if os.time() - lastFarmLogTime > 60 then
+                        logActivity("BÃI_FARM", "Hang " .. targetCave .. " đang hồi chiêu. Dịch chuyển về bãi farm cày tiền.")
+                        lastFarmLogTime = os.time()
+                    end
                     safeTeleport(STATE.FarmCFrame)
                     task.wait(0.3)
                 end
@@ -2033,21 +2059,14 @@ task.spawn(function()
                     local elapsed = os.time() - STATE.CaveHatchStartTime
                     local timeLeft = math.max(0, STATE.CaveHatchDuration - elapsed)
 
-                    -- Kiểm tra biển báo xem hang có bị đóng sớm hay chuyển cooldown không
-                    local isUnl, isCd, remSec = getCaveSignInfo(STATE.CaveHatchCaveNum)
-                    if isCd and (not remSec or remSec > 10) then
-                        timeLeft = 0 -- Server đã đóng hang
-                    elseif remSec and remSec > 0 and remSec < timeLeft then
-                        timeLeft = remSec
+                    -- Kiểm tra xem bệ trứng còn tồn tại và còn mở không
+                    local eggObj, eggCF, eggId = getCaveEggModel(STATE.CaveHatchCaveNum)
+                    if not eggObj or eggObj.Parent == nil or not isEggUnlocked(eggObj) then
+                        timeLeft = 0 -- Trứng đã bị khóa hoặc biến mất khỏi Workspace
                     end
 
-                    local eggObj, eggCF, eggId = getCaveEgg(STATE.CaveHatchCaveNum)
-                    if not eggObj or eggObj.Parent == nil then
-                        timeLeft = 0 -- Trứng đã biến mất
-                    end
-
-                    if timeLeft <= 0 or not eggObj then
-                        -- KẾT THÚC PHIÊN MỞ TRỨNG
+                    if timeLeft <= 0 then
+                        -- KẾT THÚC PHIÊN MỞ TRỨNG (MỞ ĐỦ 5 PHÚT HOẶC TRỨNG ĐÓNG)
                         STATE.CaveHatchActive = false
                         if STATE.CaveHatchedForThisCycle then
                             STATE.CaveHatchedForThisCycle[STATE.CaveHatchCaveNum] = true
@@ -2148,9 +2167,16 @@ task.spawn(function()
                     -- TRƯỜNG HỢP 2B: RƯƠNG ĐÃ VỠ VÀ BẬT AUTO HATCH -> BẮT ĐẦU MỞ TRỨNG HANG ĐÓ
                     elseif STATE.AutoHatch then
                         if STATE.IsAttackingCaveChest then
-                            logActivity("RƯƠNG_HANG", "Rương Hang " .. targetCave .. " đã vỡ xong! Chuyển sang mở trứng.")
+                            -- Chờ một khoảng ngắn (1.5s) để game kịp spawn Rương tiếp theo (Ví dụ 1 of 3 -> 2 of 3)
+                            task.wait(1.5)
+                            local nextChest = getCaveChest(targetCave)
+                            if nextChest then
+                                return -- Có rương tiếp theo, tiếp tục phá rương
+                            end
+                            STATE.IsAttackingCaveChest = false
+                            logActivity("RƯƠNG_HANG", "Toàn bộ Rương Hang " .. targetCave .. " đã vỡ xong! Chuyển sang mở trứng.")
                         end
-                        STATE.IsAttackingCaveChest = false
+
                         local eggObj, eggCF, eggId = getCaveEgg(targetCave)
 
                         if eggObj and eggCF and eggId then
