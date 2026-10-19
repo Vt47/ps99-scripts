@@ -30,6 +30,8 @@ local Player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local Camera = workspace.CurrentCamera
 
 local Library, Client, Directory, Save, PetDirectory, Network, EggCmds
+local lblAction, lblCaveTimer, lblYetiStatus, lblYetiCount, lblHatchedEggs, lblDiamonds, lblDiffDiamonds, lblUptime, lblPets
+local formatNumber, formatDuration, getDiamonds, getPetCategory, getPetVariantText, triggerRarePetAlert
 pcall(function()
     Library = RS:FindFirstChild("Library") or RS:WaitForChild("Library", 5)
     if Library then
@@ -161,8 +163,10 @@ local STATE = {
     -- [DISCORD WEBHOOK]
     Webhook = "https://discord.com/api/webhooks/1557705516178874429/DSxD6hH0VRjmXxBB44kQVM3VDhNvUwTp7h4uTCCtZK1k4vOLyOxLtjAfwxK2mCSS0MFb",
     DiscordUserId = "",
+    NotifyOnHuge = true,
     MentionOnHuge = true,
     MentionOnTitanic = true,
+    PeriodicReport = true,
     ReportInterval = 15 * 60,
     ExecuteAlert = true,
 
@@ -186,7 +190,7 @@ local updateLogsUI = nil
 local lastErrorWebhookTime = 0
 
 -- Hàm gửi thông báo Webhook Discord toàn cục
-local function sendWebhook(title, description, color, mention)
+local function sendWebhook(title, description, color, mention, fields, thumbnail)
     if not STATE.Webhook or STATE.Webhook == "" then return end
     local fn = request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
     if not fn then return end
@@ -194,15 +198,27 @@ local function sendWebhook(title, description, color, mention)
         local embed = {
             description = description,
             color = color or 5793266,
-            footer = { text = "PS99 Summit Suite | " .. Player.Name },
+            footer = {
+                text = "PS99 Summit Suite | " .. Player.Name,
+                icon_url = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. Player.UserId .. "&width=150&height=150&format=png"
+            },
             timestamp = DateTime.now():ToIsoDate()
         }
         if title and title ~= "" then embed.title = title end
-        local jsonBody = HttpService:JSONEncode({
+        if fields and type(fields) == "table" and #fields > 0 then
+            embed.fields = fields
+        end
+        if thumbnail and type(thumbnail) == "string" and thumbnail ~= "" then
+            embed.thumbnail = { url = thumbnail }
+        end
+
+        local payload = {
             username = "Diamond Mountain Monitor",
+            avatar_url = "https://images-ext-1.discordapp.net/external/t2pE8-hL3w1d6T4z4M6C3Vw.png",
             content = mention or "",
             embeds = { embed }
-        })
+        }
+        local jsonBody = HttpService:JSONEncode(payload)
         local targets = {}
         if string.find(STATE.Webhook, "discord%.com") or string.find(STATE.Webhook, "discordapp%.com") then
             table.insert(targets, (string.gsub(string.gsub(STATE.Webhook, "discord%.com", "webhook.lewisakura.moe"), "discordapp%.com", "webhook.lewisakura.moe")))
@@ -267,6 +283,232 @@ local function logActivity(category, message)
     end
 end
 
+-- ========================================================
+-- TIỆN ÍCH TOÀN CỤC: ĐỊNH DẠNG SỐ, THỜI GIAN & KIM CƯƠNG
+-- ========================================================
+formatNumber = function(n)
+    n = tonumber(n) or 0
+    local sign = n < 0 and "-" or ""
+    n = math.abs(n)
+    if n >= 1e12 then return sign .. string.format("%.2fT", n / 1e12)
+    elseif n >= 1e9 then return sign .. string.format("%.2fB", n / 1e9)
+    elseif n >= 1e6 then return sign .. string.format("%.2fM", n / 1e6)
+    elseif n >= 1e3 then return sign .. string.format("%.2fK", n / 1e3) end
+    return sign .. tostring(math.floor(n))
+end
+
+formatDuration = function(seconds)
+    seconds = math.max(0, math.floor(seconds))
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60)
+    local s = seconds % 60
+    return string.format("%02dh %02dm %02ds", h, m, s)
+end
+
+getDiamonds = function()
+    local amt = 0
+    pcall(function()
+        if Save and Save.Get then
+            local data = Save.Get()
+            if data and data.Inventory and data.Inventory.Currency then
+                for _, curr in pairs(data.Inventory.Currency) do
+                    if curr.id == "Diamonds" then
+                        amt = tonumber(curr._am) or 0
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    return amt
+end
+
+-- ========================================================
+-- QUẢN LÝ & PHÂN LOẠI THÚ CƯNG HIẾM (HUGE / TITANIC / GARGANTUAN)
+-- ========================================================
+getPetCategory = function(petId)
+    if not petId then return nil end
+    pcall(function()
+        if PetDirectory then
+            local info = PetDirectory[petId] or (PetDirectory.Get and PetDirectory:Get(petId))
+            if info then
+                if info.gargantuan == true then return "Gargantuan" end
+                if info.titanic == true then return "Titanic" end
+                if info.huge == true then return "Huge" end
+            end
+        end
+    end)
+    local lower = string.lower(tostring(petId))
+    if string.find(lower, "gargantuan") then return "Gargantuan" end
+    if string.find(lower, "titanic") then return "Titanic" end
+    if string.find(lower, "huge") then return "Huge" end
+    return nil
+end
+
+getPetVariantText = function(petData)
+    local parts = {}
+    local isRainbow = (petData.pt == 2) or petData.rainbow or (string.find(string.lower(tostring(petData.id or "")), "rainbow") ~= nil)
+    local isGolden = (petData.pt == 1) or petData.golden or (string.find(string.lower(tostring(petData.id or "")), "golden") ~= nil)
+    local isShiny = (petData.sh == true) or petData.shiny or (string.find(string.lower(tostring(petData.id or "")), "shiny") ~= nil)
+
+    if isRainbow then
+        table.insert(parts, "🌈 Rainbow")
+    elseif isGolden then
+        table.insert(parts, "🟡 Golden")
+    else
+        table.insert(parts, "⚪ Regular")
+    end
+
+    if isShiny then
+        table.insert(parts, "✨ Shiny")
+    end
+
+    return table.concat(parts, " + ")
+end
+
+triggerRarePetAlert = function(petData, amount)
+    if not STATE.NotifyOnHuge then return end
+    amount = tonumber(amount) or 1
+    local petId = tostring(petData.id or "Unknown Pet")
+    local cat = getPetCategory(petId)
+    if not cat then return end
+
+    local isTest = string.find(petId, "%[TEST%]") ~= nil
+    local variantStr = getPetVariantText(petData)
+    local serial = petData._un or petData.sn
+    local serialStr = (serial and tonumber(serial)) and (" #" .. tostring(serial)) or ""
+
+    -- Chỉ cập nhật thống kê khi là pet thật từ game
+    if not isTest then
+        if cat == "Gargantuan" then
+            STATE.TotalGargantuan = STATE.TotalGargantuan + amount
+        elseif cat == "Titanic" then
+            STATE.TotalTitanic = STATE.TotalTitanic + amount
+        elseif cat == "Huge" then
+            STATE.TotalHuge = STATE.TotalHuge + amount
+        end
+
+        pcall(function()
+            if lblPets then
+                lblPets.Text = "🟣 " .. STATE.TotalHuge .. " | 🔴 " .. STATE.TotalTitanic
+            end
+        end)
+    end
+
+    -- Báo Pop-up trong game (Roblox Core Notification)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = (isTest and "🧪 [TEST] " or "🎉 ") .. cat:upper() .. " PET!",
+            Text = petId .. "\n" .. variantStr .. serialStr .. (amount > 1 and (" x" .. amount) or ""),
+            Duration = 12
+        })
+    end)
+
+    -- Ghi vào Live Activity Log
+    logActivity("HUGE_ALERT", string.format("%s BẠN VỪA NHẬN ĐƯỢC %s: %s [%s]%s x%d!", isTest and "🧪 [TEST]" or "🎉", cat:upper(), petId, variantStr, serialStr, amount))
+
+    -- Cấu hình màu sắc & Biểu tượng Webhook
+    local embedColor = 10181046 -- Tím (Huge: #9B59B6)
+    local iconEmoji = "🟣"
+    local shouldMention = STATE.MentionOnHuge
+
+    if cat == "Titanic" then
+        embedColor = 15158332 -- Đỏ (Titanic: #E74C3C)
+        iconEmoji = "🔴"
+        shouldMention = STATE.MentionOnTitanic
+    elseif cat == "Gargantuan" then
+        embedColor = 16766720 -- Vàng (Gargantuan: #FFAA00)
+        iconEmoji = "🟡"
+        shouldMention = STATE.MentionOnTitanic
+    end
+
+    local mentionText = ""
+    if shouldMention and not isTest then
+        if STATE.DiscordUserId and STATE.DiscordUserId ~= "" then
+            mentionText = "<@" .. tostring(STATE.DiscordUserId) .. ">"
+        else
+            mentionText = "@everyone"
+        end
+    end
+
+    -- Tìm ảnh đại diện của Thú cưng
+    local petThumbUrl = nil
+    pcall(function()
+        if PetDirectory then
+            local dir = PetDirectory[petId] or (PetDirectory.Get and PetDirectory:Get(petId))
+            if dir and dir.thumbnail then
+                local assetId = string.match(tostring(dir.thumbnail), "%d+")
+                if assetId then
+                    petThumbUrl = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. assetId .. "&width=420&height=420&format=png"
+                end
+            end
+        end
+    end)
+
+    local elapsed = math.max(1, os.time() - (STATE.SessionStart or os.time()))
+    local curDiamonds = getDiamonds()
+    local startDiamonds = STATE.StartingDiamonds or curDiamonds
+    local diffDiamonds = curDiamonds - startDiamonds
+    local eggLoc = STATE.SelectedEggName or (STATE.SelectedCave and ("Hang " .. tostring(STATE.SelectedCave))) or "Đỉnh Núi PS99"
+
+    local fields = {
+        {
+            name = "🐾 Thú Cưng",
+            value = "**" .. petId .. "**" .. serialStr,
+            inline = true
+        },
+        {
+            name = "✨ Biến Thể",
+            value = "`" .. variantStr .. "`",
+            inline = true
+        },
+        {
+            name = "👤 Tài Khoản",
+            value = "`" .. Player.Name .. "`",
+            inline = true
+        },
+        {
+            name = "🥚 Nguồn / Trứng",
+            value = "`" .. tostring(eggLoc) .. "`",
+            inline = true
+        },
+        {
+            name = "💎 Kim Cương",
+            value = "`" .. formatNumber(curDiamonds) .. "` (" .. (diffDiamonds >= 0 and "+" or "") .. formatNumber(diffDiamonds) .. ")",
+            inline = true
+        },
+        {
+            name = "⏳ Thời Gian Treo",
+            value = "`" .. formatDuration(elapsed) .. "`",
+            inline = true
+        },
+        {
+            name = "🏆 Thống Kê Phiên Này",
+            value = "🟣 Huge: **" .. STATE.TotalHuge .. "** | 🔴 Titanic: **" .. STATE.TotalTitanic .. "** | 🟡 Gargantuan: **" .. STATE.TotalGargantuan .. "**",
+            inline = false
+        },
+        {
+            name = "📦 Tổng Trứng Đã Mở",
+            value = "`" .. formatNumber(STATE.TotalHatchedEggs) .. "` quả",
+            inline = true
+        }
+    }
+    if serial and tonumber(serial) then
+        table.insert(fields, {
+            name = "🔢 Số Serial",
+            value = "`#" .. tostring(serial) .. "`",
+            inline = true
+        })
+    end
+
+    local alertTitle = string.format("%s TRÚNG %s MỚI! %s", iconEmoji, cat:upper(), iconEmoji)
+    if isTest then alertTitle = "🧪 [TEST] " .. alertTitle end
+
+    local alertDesc = string.format("🎉 **Chúc mừng!** Tài khoản **%s** vừa nhận được một thú cưng **%s** cực phẩm!\n**Thú cưng:** `%s`\n**Biến thể:** `%s`", Player.Name, cat:upper(), petId, variantStr)
+
+    sendWebhook(alertTitle, alertDesc, embedColor, mentionText, fields, petThumbUrl)
+end
+
 -- Tự động lắng nghe và ghi lại bất kỳ lỗi Script / Engine nào
 pcall(function()
     local ScriptContext = game:GetService("ScriptContext")
@@ -318,7 +560,13 @@ local function saveConfig()
             ShowHatchPopup = STATE.ShowHatchPopup,
             SkipAnimation = STATE.SkipAnimation,
             SelectedEggName = STATE.SelectedEggName,
-            ExecuteAlert = STATE.ExecuteAlert
+            ExecuteAlert = STATE.ExecuteAlert,
+            NotifyOnHuge = STATE.NotifyOnHuge,
+            MentionOnHuge = STATE.MentionOnHuge,
+            MentionOnTitanic = STATE.MentionOnTitanic,
+            PeriodicReport = STATE.PeriodicReport,
+            Webhook = STATE.Webhook,
+            DiscordUserId = STATE.DiscordUserId
         }
         writefile(CONFIG_FILE, HttpService:JSONEncode(data))
     end)
@@ -362,6 +610,12 @@ local function loadConfig()
         if data.SkipAnimation ~= nil then STATE.SkipAnimation = data.SkipAnimation end
         if data.SelectedEggName and data.SelectedEggName ~= "" then STATE.SelectedEggName = data.SelectedEggName end
         if data.ExecuteAlert ~= nil then STATE.ExecuteAlert = data.ExecuteAlert end
+        if data.NotifyOnHuge ~= nil then STATE.NotifyOnHuge = data.NotifyOnHuge end
+        if data.MentionOnHuge ~= nil then STATE.MentionOnHuge = data.MentionOnHuge end
+        if data.MentionOnTitanic ~= nil then STATE.MentionOnTitanic = data.MentionOnTitanic end
+        if data.PeriodicReport ~= nil then STATE.PeriodicReport = data.PeriodicReport end
+        if data.Webhook and data.Webhook ~= "" then STATE.Webhook = data.Webhook end
+        if data.DiscordUserId ~= nil then STATE.DiscordUserId = data.DiscordUserId end
     end)
 end
 
@@ -1159,15 +1413,15 @@ local function createInfoCard(parent, title, defaultText)
 end
 
 -- TRANG 1: DASHBOARD
-local lblAction = createInfoCard(DashboardPage, "⚡ Hoạt Động:", STATE.CurrentAction)
-local lblCaveTimer = createInfoCard(DashboardPage, "⏳ Thời Gian Mở Hang:", "Đang quét...")
-local lblYetiStatus = createInfoCard(DashboardPage, "👹 Tình Trạng Yeti:", STATE.YetiStatusText)
-local lblYetiCount = createInfoCard(DashboardPage, "🏆 Số Yeti Đã Diệt:", "0 con")
-local lblHatchedEggs = createInfoCard(DashboardPage, "🥚 Số Trứng Đã Mở:", "0 quả")
-local lblDiamonds = createInfoCard(DashboardPage, "💎 Kim Cương:", "Đang tải...")
-local lblDiffDiamonds = createInfoCard(DashboardPage, "📈 Cày Được:", "+0 (+0/h)")
-local lblUptime = createInfoCard(DashboardPage, "⏱️ Thời Gian Treo:", "00h 00m 00s")
-local lblPets = createInfoCard(DashboardPage, "🐾 Huge / Titanic:", "0 / 0")
+lblAction = createInfoCard(DashboardPage, "⚡ Hoạt Động:", STATE.CurrentAction)
+lblCaveTimer = createInfoCard(DashboardPage, "⏳ Thời Gian Mở Hang:", "Đang quét...")
+lblYetiStatus = createInfoCard(DashboardPage, "👹 Tình Trạng Yeti:", STATE.YetiStatusText)
+lblYetiCount = createInfoCard(DashboardPage, "🏆 Số Yeti Đã Diệt:", "0 con")
+lblHatchedEggs = createInfoCard(DashboardPage, "🥚 Số Trứng Đã Mở:", "0 quả")
+lblDiamonds = createInfoCard(DashboardPage, "💎 Kim Cương:", "Đang tải...")
+lblDiffDiamonds = createInfoCard(DashboardPage, "📈 Cày Được:", "+0 (+0/h)")
+lblUptime = createInfoCard(DashboardPage, "⏱️ Thời Gian Treo:", "00h 00m 00s")
+lblPets = createInfoCard(DashboardPage, "🐾 Huge / Titanic:", "0 / 0")
 
 -- TRANG 2: YETI BOSS
 createToggle(YetiPage, "👹 Auto Tele & Đánh Yeti Khi Hồi Sinh", STATE.AutoYeti, function(v) STATE.AutoYeti = v end)
@@ -1582,11 +1836,29 @@ createToggle(SettingsPage, "🛡️ Anti-AFK (Chống văng 20 phút)", STATE.An
 end)
 createToggle(SettingsPage, "🔄 Auto Reconnect Khi Đứt Mạng", STATE.AutoReconnect, function(v) STATE.AutoReconnect = v end)
 createToggle(SettingsPage, "🔔 Báo Webhook Khi Mở/Execute Script", STATE.ExecuteAlert, function(v) STATE.ExecuteAlert = v saveConfig() end)
+createToggle(SettingsPage, "🟣 Báo Webhook Khi Trúng Huge / Titanic", STATE.NotifyOnHuge, function(v) STATE.NotifyOnHuge = v saveConfig() end)
+createToggle(SettingsPage, "📢 Tag @everyone Khi Trúng Huge", STATE.MentionOnHuge, function(v) STATE.MentionOnHuge = v STATE.MentionOnTitanic = v saveConfig() end)
+createToggle(SettingsPage, "📊 Báo Cáo Định Kỳ 15 Phút Về Discord", STATE.PeriodicReport, function(v) STATE.PeriodicReport = v saveConfig() end)
 createToggle(SettingsPage, "🧲 Auto Hút Orbs & Nhặt Lootbags", STATE.AutoCollectDrops, function(v) STATE.AutoCollectDrops = v end)
 createToggle(SettingsPage, "🏆 Auto Nhận Expeditions Đỉnh Núi", STATE.AutoClaimExpeditions, function(v) STATE.AutoClaimExpeditions = v end)
 createToggle(SettingsPage, "🔋 Low CPU Mode (Màn Đen Tiết Kiệm Pin)", STATE.LowCpuMode, function(v)
     STATE.LowCpuMode = v
     pcall(function() RunService:Set3dRenderingEnabled(not v) end)
+end)
+
+-- NÚT TEST THỬ WEBHOOK BÁO HUGE
+createActionButton(SettingsPage, "🧪 Test Thử Webhook Báo Huge", Color3.fromRGB(130, 80, 200), function()
+    pcall(function()
+        if triggerRarePetAlert then
+            triggerRarePetAlert({
+                id = "Huge Summit Ice Dragon [TEST]",
+                pt = 2,
+                sh = true,
+                _un = 1234,
+                _am = 1
+            }, 1)
+        end
+    end)
 end)
 
 -- NÚT DUMP LOG DEBUG
@@ -1607,48 +1879,18 @@ end)
 --========================================================================
 
 task.spawn(function()
-    local Library, Client, Directory, Save, PetDirectory, Network, EggCmds
     pcall(function()
-        Library = RS:WaitForChild("Library", 8)
+        if not Library then Library = RS:FindFirstChild("Library") or RS:WaitForChild("Library", 8) end
         if Library then
-            Client = Library:FindFirstChild("Client")
-            Directory = Library:FindFirstChild("Directory")
-            if Client and Client:FindFirstChild("Save") then Save = require(Client.Save) end
-            if Directory and Directory:FindFirstChild("Pets") then PetDirectory = require(Directory.Pets) end
-            if Client and Client:FindFirstChild("Network") then Network = require(Client.Network) end
-            if Client and Client:FindFirstChild("EggCmds") then EggCmds = require(Client.EggCmds) end
+            if not Client then Client = Library:FindFirstChild("Client") end
+            if not Directory then Directory = Library:FindFirstChild("Directory") end
+            if not Save and Client and Client:FindFirstChild("Save") then Save = require(Client.Save) end
+            if not PetDirectory and Directory and Directory:FindFirstChild("Pets") then PetDirectory = require(Directory.Pets) end
+            if not Network and Client and Client:FindFirstChild("Network") then Network = require(Client.Network) end
+            if not EggCmds and Client and Client:FindFirstChild("EggCmds") then EggCmds = require(Client.EggCmds) end
         end
     end)
     if not Network and RS:FindFirstChild("Network") then Network = RS.Network end
-
-    local function formatNumber(n)
-        n = tonumber(n) or 0
-        local sign = n < 0 and "-" or ""
-        n = math.abs(n)
-        if n >= 1e12 then return sign .. string.format("%.2fT", n / 1e12)
-        elseif n >= 1e9 then return sign .. string.format("%.2fB", n / 1e9)
-        elseif n >= 1e6 then return sign .. string.format("%.2fM", n / 1e6)
-        elseif n >= 1e3 then return sign .. string.format("%.2fK", n / 1e3) end
-        return sign .. tostring(math.floor(n))
-    end
-
-    local function formatDuration(seconds)
-        seconds = math.max(0, math.floor(seconds))
-        local h = math.floor(seconds / 3600)
-        local m = math.floor((seconds % 3600) / 60)
-        local s = seconds % 60
-        return string.format("%02dh %02dm %02ds", h, m, s)
-    end
-
-    local function getDiamonds()
-        local data
-        pcall(function() if Save and Save.Get then data = Save.Get() end end)
-        if not data or not data.Inventory or not data.Inventory.Currency then return 0 end
-        for _, curr in pairs(data.Inventory.Currency) do
-            if curr.id == "Diamonds" then return tonumber(curr._am) or 0 end
-        end
-        return 0
-    end
 
     STATE.StartingDiamonds = getDiamonds()
 
@@ -1941,6 +2183,129 @@ task.spawn(function()
         return ok and count or nil
     end
     lastPetCount = getInventoryPetCount()
+
+    -- ========================================================
+    -- RADAR QUÉT KHO & PHÁT HIỆN THÚ CƯNG HIẾM (HUGE / TITANIC / GARGANTUAN)
+    -- ========================================================
+    local previousPetSnapshot = {}
+    local isPetBaselineReady = false
+
+    local function makePetSnapshot()
+        local snapshot = {}
+        if not Save or not Save.Get then return snapshot end
+        pcall(function()
+            local s = Save.Get()
+            if s and s.Inventory and s.Inventory.Pet then
+                for uid, pet in pairs(s.Inventory.Pet) do
+                    snapshot[tostring(uid)] = {
+                        id = pet.id,
+                        pt = pet.pt,
+                        sh = pet.sh,
+                        golden = pet.golden,
+                        rainbow = pet.rainbow,
+                        shiny = pet.shiny,
+                        sn = pet.sn or pet._un,
+                        _am = tonumber(pet._am) or 1
+                    }
+                end
+            end
+        end)
+        return snapshot
+    end
+
+    -- Vòng lặp radar quét kho thời gian thực (chu kỳ 1.0 giây)
+    task.spawn(function()
+        local baselineWaitCount = 0
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
+            task.wait(1.0)
+
+            local currentSnapshot = makePetSnapshot()
+            if not isPetBaselineReady then
+                baselineWaitCount = baselineWaitCount + 1
+                -- Chốt danh sách pet đang có sẵn trong túi để không báo ảo
+                if next(currentSnapshot) ~= nil or baselineWaitCount >= 4 then
+                    previousPetSnapshot = currentSnapshot
+                    isPetBaselineReady = true
+                    local initialCount = 0
+                    for _ in pairs(currentSnapshot) do initialCount = initialCount + 1 end
+                    logActivity("THEO_DÕI_PET", "Radar thú cưng kích hoạt thành công! Đã nạp " .. initialCount .. " pet sẵn có trong kho. Sẵn sàng thông báo Huge/Titanic mới.")
+                end
+            else
+                for uid, currentPet in pairs(currentSnapshot) do
+                    local oldPet = previousPetSnapshot[uid]
+                    if not oldPet then
+                        -- Thú cưng hoàn toàn mới vừa xuất hiện trong kho!
+                        local cat = getPetCategory(currentPet.id)
+                        if cat then
+                            triggerRarePetAlert(currentPet, currentPet._am or 1)
+                        end
+                    else
+                        local increase = (currentPet._am or 1) - (oldPet._am or 1)
+                        if increase > 0 then
+                            -- Thú cưng tăng thêm số lượng
+                            local cat = getPetCategory(currentPet.id)
+                            if cat then
+                                triggerRarePetAlert(currentPet, increase)
+                            end
+                        end
+                    end
+                end
+                previousPetSnapshot = currentSnapshot
+            end
+        end
+    end)
+
+    -- BÁO CÁO THỐNG KÊ ĐỊNH KỲ VỀ DISCORD MỖI 15 PHÚT
+    task.spawn(function()
+        local lastReportTime = os.time()
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
+            task.wait(10)
+            if STATE.PeriodicReport and (os.time() - lastReportTime >= (STATE.ReportInterval or 900)) then
+                lastReportTime = os.time()
+                pcall(function()
+                    local elapsed = math.max(1, os.time() - (STATE.SessionStart or os.time()))
+                    local curD = getDiamonds()
+                    local diff = curD - (STATE.StartingDiamonds or curD)
+                    local rate = math.floor((diff / elapsed) * 3600)
+
+                    local fps = 60
+                    pcall(function() fps = math.floor(1 / math.max(0.001, RunService.RenderStepped:Wait())) end)
+                    local ping = 0
+                    pcall(function()
+                        local ssi = game:GetService("Stats"):FindFirstChild("Network") and game:GetService("Stats").Network:FindFirstChild("ServerStatsItem")
+                        local pi = ssi and ssi:FindFirstChild("Data Ping")
+                        if pi then ping = math.floor(pi:GetValue()) end
+                    end)
+
+                    local repFields = {
+                        {
+                            name = "💎 Kim Cương (Diamonds)",
+                            value = "Bắt đầu: `" .. formatNumber(STATE.StartingDiamonds or 0) .. "`\nHiện tại: `" .. formatNumber(curD) .. "`\nKiếm được: `" .. (diff >= 0 and "+" or "") .. formatNumber(diff) .. "`\n⚡ Tốc độ: `" .. formatNumber(rate) .. "/h`",
+                            inline = false
+                        },
+                        {
+                            name = "🐾 Thống Kê Thú Cưng Quý (Phiên Này)",
+                            value = "🟣 Huge: **" .. STATE.TotalHuge .. "**\n🔴 Titanic: **" .. STATE.TotalTitanic .. "**\n🟡 Gargantuan: **" .. STATE.TotalGargantuan .. "**\n📦 Trứng đã mở: **" .. formatNumber(STATE.TotalHatchedEggs) .. "** quả",
+                            inline = false
+                        },
+                        {
+                            name = "⚙️ Trạng Thái Hoạt Động",
+                            value = "⏱️ Thời gian treo: `" .. formatDuration(elapsed) .. "`\n🎯 Hành động: `" .. tostring(STATE.CurrentAction) .. "`\n📶 Ping: `" .. ping .. " ms` | 🖥️ FPS: `" .. fps .. "`\n🔋 Low CPU Mode: `" .. (STATE.LowCpuMode and "BẬT" or "TẮT") .. "`",
+                            inline = false
+                        }
+                    }
+
+                    sendWebhook(
+                        "📊 BÁO CÁO ĐỊNH KỲ 15 PHÚT - PS99 SUMMIT SUITE",
+                        "Tiến trình AFK tự động tại khu vực **Diamond Mountain** của tài khoản **" .. Player.Name .. "**.",
+                        3447003,
+                        nil,
+                        repFields
+                    )
+                end)
+            end
+        end
+    end)
 
     -- XỬ LÝ POP-UP VÀ BỎ QUA TOÀN BỘ CẮT CẢNH MỞ TRỨNG (ANIMATION BYPASS)
     handleEggOpeningVisuals = function()
