@@ -445,7 +445,7 @@ end
 -- ĐIỀU PHỐI HANG, RƯƠNG & TRỨNG (CHUẨN HÓA 100% DỰA TRÊN DUMP_INFO)
 --========================================================================
 
--- Lấy đối tượng và CFrame Rương Boss của Hang (Trail 1-6)
+-- Lấy đối tượng và CFrame Rương Boss của Hang (Trail 1-6, ưu tiên rương gần nhân vật nhất)
 local function getCaveChest(caveNum)
     caveNum = tonumber(caveNum) or STATE.SelectedCave
     local Things = workspace:FindFirstChild("__THINGS")
@@ -453,6 +453,14 @@ local function getCaveChest(caveNum)
     if not Breakables then return nil, nil end
 
     local targetArea = "trail" .. tostring(caveNum)
+
+    local nearestChest = nil
+    local nearestCF = nil
+    local minDist = math.huge
+
+    local char = Player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local myPos = hrp and hrp.Position or Vector3.new(0, 0, 0)
 
     for _, b in pairs(Breakables:GetChildren()) do
         local areaId = string.lower(tostring(b:GetAttribute("AreaID") or ""))
@@ -465,12 +473,17 @@ local function getCaveChest(caveNum)
         if (matchArea or matchBId) and bId ~= "yeti" then
             local part = b:IsA("BasePart") and b or b:FindFirstChildWhichIsA("BasePart", true)
             if part then
-                return b, part.CFrame
+                local dist = (part.Position - myPos).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    nearestChest = b
+                    nearestCF = part.CFrame
+                end
             end
         end
     end
 
-    return nil, nil
+    return nearestChest, nearestCF
 end
 
 -- Lấy hàm tính số trứng tối đa (Max Hatch Slots)
@@ -2125,10 +2138,7 @@ task.spawn(function()
                 -- GIAI ĐOẠN 2: ĐIỀU PHỐI HANG ĐÃ CHỌN (RƯƠNG -> TRỨNG -> CHỜ COOLDOWN)
                 -- ========================================================
                 elseif (STATE.AutoCaveChests or STATE.AutoHatch) and hrp then
-                    local chestObj, chestCF = nil, nil
-                    if STATE.AutoCaveChests then
-                        chestObj, chestCF = getCaveChest(targetCave)
-                    end
+                    local chestObj, chestCF = getCaveChest(targetCave)
 
                     -- TRƯỜNG HỢP 2A: PHÁT HIỆN RƯƠNG BOSS TRONG HANG
                     -- "Nếu Hang đang có Rương Boss: Teleport nhân vật đến đứng sát trước mặt rương Hang đó... chỉ cần tp sát rương là được rồi"
@@ -2137,19 +2147,25 @@ task.spawn(function()
                         if STATE.CaveHatchedForThisCycle then
                             STATE.CaveHatchedForThisCycle[targetCave] = false
                         end
-                        if not STATE.IsAttackingCaveChest then
-                            logActivity("RƯƠNG_HANG", "Phát hiện Rương Boss Hang " .. targetCave .. " (UID: " .. chestObj.Name .. "). Tiếp cận phá rương...")
-                        end
-                        STATE.IsAttackingCaveChest = true
-                        STATE.CaveCFrames[targetCave] = chestCF
 
-                        local dist = (chestCF.Position - hrp.Position).Magnitude
-                        -- Nếu ở xa hơn 6 studs: Teleport đứng sát trước mặt rương (cách 3.5 studs)
-                        if dist > 6 then
+                        -- Khi phát hiện một rương mới (hoặc chuyển từ Rương 1 sang Rương 2, Rương 3)
+                        if not STATE.IsAttackingCaveChest or STATE.CurrentChestUID ~= chestObj.Name then
+                            STATE.CurrentChestUID = chestObj.Name
+                            logActivity("RƯƠNG_HANG", "Phát hiện Rương Boss Hang " .. targetCave .. " (UID: " .. chestObj.Name .. "). Tiếp cận phá rương...")
                             local standPos = chestCF.Position + Vector3.new(0, 0.5, 3.5)
                             safeTeleportTo(standPos, chestCF.Position)
                             task.wait(0.2)
+                        else
+                            local dist = (chestCF.Position - hrp.Position).Magnitude
+                            -- Nếu ở xa hơn 6 studs: Teleport đứng sát trước mặt rương (cách 3.5 studs)
+                            if dist > 6 then
+                                local standPos = chestCF.Position + Vector3.new(0, 0.5, 3.5)
+                                safeTeleportTo(standPos, chestCF.Position)
+                                task.wait(0.2)
+                            end
                         end
+                        STATE.IsAttackingCaveChest = true
+                        STATE.CaveCFrames[targetCave] = chestCF
 
                         -- Gửi sát thương phá rương (Breakables_PlayerDealDamage)
                         if Network and Network.Fire then
@@ -2164,19 +2180,28 @@ task.spawn(function()
 
                         STATE.CurrentAction = "📦 Đang phá Rương Hang " .. targetCave .. " (UID: " .. chestObj.Name .. ")"
 
-                    -- TRƯỜNG HỢP 2B: RƯƠNG ĐÃ VỠ VÀ BẬT AUTO HATCH -> BẮT ĐẦU MỞ TRỨNG HANG ĐÓ
-                    elseif STATE.AutoHatch then
-                        if STATE.IsAttackingCaveChest then
-                            -- Chờ một khoảng ngắn (1.5s) để game kịp spawn Rương tiếp theo (Ví dụ 1 of 3 -> 2 of 3)
-                            task.wait(1.5)
-                            local nextChest = getCaveChest(targetCave)
-                            if nextChest then
-                                return -- Có rương tiếp theo, tiếp tục phá rương
-                            end
+                    -- TRƯỜNG HỢP 2B: VỪA PHÁ XONG 1 RƯƠNG TRONG HANG -> TỰ ĐỘNG DỊCH CHUYỂN TỚI RƯƠNG TIẾP THEO
+                    elseif STATE.IsAttackingCaveChest then
+                        -- Chờ 1.2s để game kịp spawn rương kế tiếp (Ví dụ rương 1 of 3 -> 2 of 3)
+                        task.wait(1.2)
+                        local nextChest, nextCF = getCaveChest(targetCave)
+                        if nextChest and nextCF then
+                            -- RƯƠNG KẾ TIẾP ĐÃ XUẤT HIỆN -> DỊCH CHUYỂN TỚI NGAY LẬP TỨC!
+                            STATE.CurrentChestUID = nextChest.Name
+                            STATE.CaveCFrames[targetCave] = nextCF
+                            logActivity("RƯƠNG_HANG", "Rương trước đã vỡ! Tự động dịch chuyển tới Rương tiếp theo Hang " .. targetCave .. " (UID: " .. nextChest.Name .. ")...")
+                            local standPos = nextCF.Position + Vector3.new(0, 0.5, 3.5)
+                            safeTeleportTo(standPos, nextCF.Position)
+                            task.wait(0.2)
+                        else
+                            -- KHÔNG CÒN RƯƠNG NÀO NỮA -> TOÀN BỘ RƯƠNG ĐÃ VỠ XONG
                             STATE.IsAttackingCaveChest = false
-                            logActivity("RƯƠNG_HANG", "Toàn bộ Rương Hang " .. targetCave .. " đã vỡ xong! Chuyển sang mở trứng.")
+                            STATE.CurrentChestUID = nil
+                            logActivity("RƯƠNG_HANG", "Toàn bộ Rương Hang " .. targetCave .. " đã bị tiêu diệt xong!")
                         end
 
+                    -- TRƯỜNG HỢP 2C: KHÔNG CÒN RƯƠNG VÀ BẬT AUTO HATCH -> BẮT ĐẦU MỞ TRỨNG
+                    elseif STATE.AutoHatch then
                         local eggObj, eggCF, eggId = getCaveEgg(targetCave)
 
                         if eggObj and eggCF and eggId then
@@ -2200,13 +2225,11 @@ task.spawn(function()
                             STATE.CurrentAction = "🎉 Rương đã vỡ! Bắt đầu mở trứng " .. eggId .. " Hang " .. targetCave
                         else
                             -- Hang chưa có trứng mở được (hoặc đã mở xong chu kỳ này / đang cooldown)
-                            STATE.IsAttackingCaveChest = false
                             handleCaveCooldown(targetCave, hrp)
                         end
 
-                    -- TRƯỜNG HỢP 2C: KHÔNG BẬT MỞ TRỨNG HOẶC HANG ĐANG COOLDOWN
+                    -- TRƯỜNG HỢP 2D: KHÔNG CÒN RƯƠNG VÀ KHÔNG BẬT MỞ TRỨNG -> COOLDOWN VỀ BÃI FARM
                     else
-                        STATE.IsAttackingCaveChest = false
                         handleCaveCooldown(targetCave, hrp)
                     end
 
