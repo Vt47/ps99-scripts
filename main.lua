@@ -168,6 +168,107 @@ local STATE = {
 }
 
 --========================================================================
+-- HỆ THỐNG GHI NHẬT KÝ HOẠT ĐỘNG & BẮT LỖI (LIVE ACTIVITY & ERROR LOGGER)
+--========================================================================
+local ACTIVITY_LOGS = {}
+local MAX_LOGS = 300
+local LOG_FILE = "ps99_activity_log.txt"
+local updateLogsUI = nil
+local lastErrorWebhookTime = 0
+
+-- Hàm gửi thông báo Webhook Discord toàn cục
+local function sendWebhook(title, description, color, mention)
+    if not STATE.Webhook or STATE.Webhook == "" then return end
+    local fn = request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
+    if not fn then return end
+    pcall(function()
+        local embed = {
+            description = description,
+            color = color or 5793266,
+            footer = { text = "PS99 Summit Suite | " .. Player.Name },
+            timestamp = DateTime.now():ToIsoDate()
+        }
+        if title and title ~= "" then embed.title = title end
+        local jsonBody = HttpService:JSONEncode({
+            username = "Diamond Mountain Monitor",
+            content = mention or "",
+            embeds = { embed }
+        })
+        local targets = {}
+        if string.find(STATE.Webhook, "discord%.com") or string.find(STATE.Webhook, "discordapp%.com") then
+            table.insert(targets, (string.gsub(string.gsub(STATE.Webhook, "discord%.com", "webhook.lewisakura.moe"), "discordapp%.com", "webhook.lewisakura.moe")))
+            table.insert(targets, (string.gsub(string.gsub(STATE.Webhook, "discord%.com", "discord.yeesen.dev"), "discordapp%.com", "discord.yeesen.dev")))
+        end
+        table.insert(targets, STATE.Webhook)
+
+        for _, targetUrl in ipairs(targets) do
+            local ok, res = pcall(function()
+                return fn({
+                    Url = targetUrl,
+                    url = targetUrl,
+                    Method = "POST",
+                    method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    headers = { ["Content-Type"] = "application/json" },
+                    Body = jsonBody,
+                    body = jsonBody
+                })
+            end)
+            if ok and res then
+                local status = type(res) == "table" and (res.StatusCode or res.status_code or res.Status) or nil
+                if status == 200 or status == 204 or (status == nil and res.Body ~= nil) then
+                    break
+                end
+            end
+            task.wait(0.2)
+        end
+    end)
+end
+
+local function logActivity(category, message)
+    local timeStr = os.date("%H:%M:%S")
+    local line = string.format("[%s] [%s] %s", timeStr, tostring(category):upper(), tostring(message))
+    
+    table.insert(ACTIVITY_LOGS, line)
+    if #ACTIVITY_LOGS > MAX_LOGS then
+        table.remove(ACTIVITY_LOGS, 1)
+    end
+
+    -- In ra Console Roblox (F9)
+    print("[PS99 Log] " .. line)
+
+    -- Tự động lưu file máy tính ps99_activity_log.txt (nếu executor hỗ trợ)
+    pcall(function()
+        if appendfile then
+            appendfile(LOG_FILE, line .. "\n")
+        elseif writefile and #ACTIVITY_LOGS % 10 == 0 then
+            writefile(LOG_FILE, table.concat(ACTIVITY_LOGS, "\n"))
+        end
+    end)
+
+    -- Tự động báo về Discord nếu xảy ra lỗi hệ thống nghiêm trọng (tối đa 1 lần mỗi 30s)
+    if tostring(category):upper() == "LỖI_HỆ_THỐNG" and sendWebhook and (os.time() - lastErrorWebhookTime > 30) then
+        lastErrorWebhookTime = os.time()
+        sendWebhook("⚠️ PHÁT HIỆN LỖI SCRIPT (AUTO ERROR LOG)", "```text\n" .. tostring(message) .. "\n```", 16724787)
+    end
+
+    -- Cập nhật giao diện nếu tab Nhật Ký đang mở
+    if updateLogsUI then
+        pcall(updateLogsUI)
+    end
+end
+
+-- Tự động lắng nghe và ghi lại bất kỳ lỗi Script / Engine nào
+pcall(function()
+    local ScriptContext = game:GetService("ScriptContext")
+    ScriptContext.Error:Connect(function(msg, stack, scriptInstance)
+        if _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID then
+            logActivity("LỖI_HỆ_THỐNG", tostring(msg) .. " | " .. tostring(stack))
+        end
+    end)
+end)
+
+--========================================================================
 -- HỆ THỐNG LƯU VÀ TỰ ĐỘNG TẢI CẤU HÌNH (AUTO-SAVE / AUTO-LOAD CONFIG)
 --========================================================================
 
@@ -551,7 +652,7 @@ end)
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-MainFrame.Size = UDim2.new(0, 510, 0, 360)
+MainFrame.Size = UDim2.new(0, 520, 0, 375)
 MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 28)
 MainFrame.BorderSizePixel = 0
@@ -682,6 +783,7 @@ local DashboardPage = createPage("Dashboard")
 local YetiPage = createPage("Yeti")
 local TrailsPage = createPage("Trails")
 local FarmPage = createPage("Farm")
+local LogsPage = createPage("Logs")
 local SettingsPage = createPage("Settings")
 
 local TabButtons = {}
@@ -709,6 +811,9 @@ local function addTabButton(text, pageName)
         end
         TabBtn.BackgroundColor3 = Color3.fromRGB(50, 110, 220)
         TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        if pageName == "Logs" and updateLogsUI then
+            pcall(updateLogsUI)
+        end
     end)
 
     table.insert(TabButtons, TabBtn)
@@ -719,6 +824,7 @@ local btnDash = addTabButton("📊 Tổng Quan", "Dashboard")
 addTabButton("👹 Yeti Boss", "Yeti")
 addTabButton("⛰️ Hang & Trứng", "Trails")
 addTabButton("💰 Bãi Farm Tiền", "Farm")
+addTabButton("📜 Nhật Ký", "Logs")
 addTabButton("⚙️ Cài Đặt AFK", "Settings")
 
 local btnSidebarReconnect = Instance.new("TextButton")
@@ -1104,7 +1210,133 @@ createActionButton(FarmPage, "🚀 Teleport Về Bãi Farm Ngay", Color3.fromRGB
     if STATE.FarmCFrame and hrp then hrp.CFrame = STATE.FarmCFrame + Vector3.new(0, 3, 0) end
 end)
 
--- TRANG 5: CÀI ĐẶT
+-- TRANG 5: NHẬT KÝ HOẠT ĐỘNG & BẮT LỖI (ACTIVITY & ERROR LOGS)
+createActionButton(LogsPage, "📋 Sao Chép Toàn Bộ Log (Clipboard)", Color3.fromRGB(40, 140, 90), function()
+    local text = #ACTIVITY_LOGS > 0 and table.concat(ACTIVITY_LOGS, "\n") or "[Trống - Chưa có nhật ký]"
+    local copied = false
+    if setclipboard then
+        pcall(function() setclipboard(text) copied = true end)
+    elseif toclipboard then
+        pcall(function() toclipboard(text) copied = true end)
+    end
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = copied and "📋 Đã Sao Chép Log" or "⚠️ Không Thể Copy",
+            Text = copied and ("Đã sao chép " .. #ACTIVITY_LOGS .. " dòng nhật ký vào clipboard!") or "Executor không hỗ trợ hàm setclipboard.",
+            Duration = 3
+        })
+    end)
+end)
+
+createActionButton(LogsPage, "📤 Gửi Nhật Ký Về Discord Webhook", Color3.fromRGB(80, 100, 160), function()
+    if not STATE.Webhook or STATE.Webhook == "" then
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "⚠️ Chưa Có Webhook",
+                Text = "Vui lòng nhập link Discord Webhook ở tab Cài Đặt AFK!",
+                Duration = 3
+            })
+        end)
+        return
+    end
+    local count = #ACTIVITY_LOGS
+    if count == 0 then
+        sendWebhook("📜 BÁO CÁO NHẬT KÝ", "*(Chưa có nhật ký nào được ghi)*", 3447003)
+        return
+    end
+
+    local chunk = {}
+    local startIdx = math.max(1, count - 35)
+    for i = startIdx, count do
+        table.insert(chunk, ACTIVITY_LOGS[i])
+    end
+    local logText = "```text\n" .. table.concat(chunk, "\n") .. "\n```"
+    sendWebhook("📜 BÁO CÁO NHẬT KÝ HOẠT ĐỘNG", "Tài khoản: **" .. Player.Name .. "**\nTổng số dòng: `" .. count .. "`\n" .. logText, 3447003)
+
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "📤 Đã Gửi Log Discord",
+            Text = "Đã gửi " .. #chunk .. " dòng nhật ký gần nhất về Discord!",
+            Duration = 3
+        })
+    end)
+end)
+
+createActionButton(LogsPage, "🗑️ Xóa Sạch Nhật Ký", Color3.fromRGB(180, 60, 60), function()
+    ACTIVITY_LOGS = {}
+    pcall(function()
+        if writefile then writefile(LOG_FILE, "") end
+    end)
+    if updateLogsUI then updateLogsUI() end
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "🗑️ Đã Xóa Nhật Ký",
+            Text = "Đã dọn sạch toàn bộ nhật ký trong bộ nhớ và file log.",
+            Duration = 2.5
+        })
+    end)
+end)
+
+local ConsoleFrame = Instance.new("Frame")
+ConsoleFrame.Name = "ConsoleFrame"
+ConsoleFrame.Size = UDim2.new(1, 0, 0, 240)
+ConsoleFrame.BackgroundColor3 = Color3.fromRGB(14, 16, 24)
+ConsoleFrame.Parent = LogsPage
+
+local ConsoleCorner = Instance.new("UICorner")
+ConsoleCorner.CornerRadius = UDim.new(0, 8)
+ConsoleCorner.Parent = ConsoleFrame
+
+local ConsoleStroke = Instance.new("UIStroke")
+ConsoleStroke.Color = Color3.fromRGB(45, 55, 80)
+ConsoleStroke.Thickness = 1
+ConsoleStroke.Parent = ConsoleFrame
+
+local ConsoleScroll = Instance.new("ScrollingFrame")
+ConsoleScroll.Name = "ConsoleScroll"
+ConsoleScroll.Size = UDim2.new(1, -12, 1, -12)
+ConsoleScroll.Position = UDim2.new(0, 6, 0, 6)
+ConsoleScroll.BackgroundTransparency = 1
+ConsoleScroll.ScrollBarThickness = 4
+ConsoleScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 140, 255)
+ConsoleScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ConsoleScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+ConsoleScroll.Parent = ConsoleFrame
+
+local logDisplayLabel = Instance.new("TextLabel")
+logDisplayLabel.Name = "LogDisplayLabel"
+logDisplayLabel.Size = UDim2.new(1, -4, 0, 0)
+logDisplayLabel.AutomaticSize = Enum.AutomaticSize.Y
+logDisplayLabel.BackgroundTransparency = 1
+logDisplayLabel.Font = Enum.Font.Code
+logDisplayLabel.TextSize = 10
+logDisplayLabel.TextColor3 = Color3.fromRGB(200, 215, 235)
+logDisplayLabel.TextXAlignment = Enum.TextXAlignment.Left
+logDisplayLabel.TextYAlignment = Enum.TextYAlignment.Top
+logDisplayLabel.TextWrapped = true
+logDisplayLabel.Text = "[HỆ THỐNG] Đang chờ sự kiện hoạt động..."
+logDisplayLabel.Parent = ConsoleScroll
+
+updateLogsUI = function()
+    if not logDisplayLabel or not logDisplayLabel.Parent then return end
+    local count = #ACTIVITY_LOGS
+    if count == 0 then
+        logDisplayLabel.Text = "[HỆ THỐNG] (Chưa có nhật ký nào được ghi nhận)"
+        return
+    end
+    local maxDisplay = 50
+    local startIdx = math.max(1, count - maxDisplay + 1)
+    local lines = {}
+    for i = startIdx, count do
+        table.insert(lines, ACTIVITY_LOGS[i])
+    end
+    logDisplayLabel.Text = table.concat(lines, "\n")
+    pcall(function()
+        ConsoleScroll.CanvasPosition = Vector2.new(0, 999999)
+    end)
+end
+
+-- TRANG 6: CÀI ĐẶT
 createToggle(SettingsPage, "🛡️ Anti-AFK (Chống văng 20 phút)", STATE.AntiAFK, function(v)
     STATE.AntiAFK = v
     if v then disableIdledConnections() end
@@ -1136,54 +1368,6 @@ end)
 --========================================================================
 
 task.spawn(function()
-    local function sendWebhook(title, description, color, mention)
-        if not STATE.Webhook or STATE.Webhook == "" then return end
-        local fn = request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
-        if not fn then return end
-        pcall(function()
-            local embed = {
-                description = description,
-                color = color or 5793266,
-                footer = { text = "PS99 Summit Suite | " .. Player.Name },
-                timestamp = DateTime.now():ToIsoDate()
-            }
-            if title and title ~= "" then embed.title = title end
-            local jsonBody = HttpService:JSONEncode({
-                username = "Diamond Mountain Monitor",
-                content = mention or "",
-                embeds = { embed }
-            })
-            local targets = {}
-            if string.find(STATE.Webhook, "discord%.com") or string.find(STATE.Webhook, "discordapp%.com") then
-                table.insert(targets, (string.gsub(string.gsub(STATE.Webhook, "discord%.com", "webhook.lewisakura.moe"), "discordapp%.com", "webhook.lewisakura.moe")))
-                table.insert(targets, (string.gsub(string.gsub(STATE.Webhook, "discord%.com", "discord.yeesen.dev"), "discordapp%.com", "discord.yeesen.dev")))
-            end
-            table.insert(targets, STATE.Webhook)
-
-            for _, targetUrl in ipairs(targets) do
-                local ok, res = pcall(function()
-                    return fn({
-                        Url = targetUrl,
-                        url = targetUrl,
-                        Method = "POST",
-                        method = "POST",
-                        Headers = { ["Content-Type"] = "application/json" },
-                        headers = { ["Content-Type"] = "application/json" },
-                        Body = jsonBody,
-                        body = jsonBody
-                    })
-                end)
-                if ok and res then
-                    local status = type(res) == "table" and (res.StatusCode or res.status_code or res.Status) or nil
-                    if status == 200 or status == 204 or (status == nil and res.Body ~= nil) then
-                        break
-                    end
-                end
-                task.wait(0.2)
-            end
-        end)
-    end
-
     local Library, Client, Directory, Save, PetDirectory, Network, EggCmds
     pcall(function()
         Library = RS:WaitForChild("Library", 8)
@@ -1395,6 +1579,7 @@ task.spawn(function()
                     if not inCaveSession and not STATE.IsFightingYeti then
                         STATE.IsFightingYeti = true
                         STATE.CurrentAction = "⚔️ Đang săn Yeti Boss!"
+                        logActivity("YETI_BOSS", "Phát hiện Yeti Boss xuất hiện! Dịch chuyển lên đỉnh núi tấn công...")
                         if not STATE.YetiArenaCFrame and typeof(yetiPos) == "CFrame" then
                             STATE.YetiArenaCFrame = yetiPos
                         end
@@ -1418,6 +1603,7 @@ task.spawn(function()
                             STATE.IsFightingYeti = false
                             STATE.YetiKilledCount = STATE.YetiKilledCount + 1
                             STATE.CurrentAction = "🏆 Yeti đã bị hạ gục!"
+                            logActivity("YETI_BOSS", "Đã hạ gục Yeti Boss thành công! Tổng số đã diệt: " .. STATE.YetiKilledCount .. " con.")
 
                             if STATE.YetiCooldownAlert then
                                 sendWebhook(
@@ -1653,6 +1839,7 @@ task.spawn(function()
             if STATE.FarmCFrame then
                 local dist = (STATE.FarmCFrame.Position - hrp.Position).Magnitude
                 if dist > 35 then
+                    logActivity("BÃI_FARM", "Hang " .. targetCave .. " đang hồi chiêu. Dịch chuyển về bãi farm cày tiền.")
                     safeTeleport(STATE.FarmCFrame)
                     task.wait(0.3)
                 end
@@ -1704,6 +1891,7 @@ task.spawn(function()
                         -- KẾT THÚC PHIÊN MỞ TRỨNG
                         STATE.CaveHatchActive = false
                         STATE.CurrentAction = "⏰ Kết thúc phiên mở trứng Hang " .. STATE.CaveHatchCaveNum .. "!"
+                        logActivity("MỞ_TRỨNG", "Kết thúc phiên mở trứng Hang " .. STATE.CaveHatchCaveNum .. ".")
 
                         -- Kiểm tra ngay nếu Yeti đang sống thì bay lên hạ gục Yeti
                         local yetiObj, yetiPos = checkYetiBoss()
@@ -1742,6 +1930,7 @@ task.spawn(function()
                             if curPetCount > lastPetCount then
                                 local deltaPets = curPetCount - lastPetCount
                                 STATE.TotalHatchedEggs = STATE.TotalHatchedEggs + deltaPets
+                                logActivity("MỞ_TRỨNG", "Mở thành công +" .. deltaPets .. " thú cưng từ trứng " .. tostring(eggId) .. ". (Tổng: " .. STATE.TotalHatchedEggs .. ")")
                             end
                             lastPetCount = curPetCount
                         elseif hatchedThisCycle then
@@ -1763,6 +1952,9 @@ task.spawn(function()
                     -- TRƯỜNG HỢP 2A: PHÁT HIỆN RƯƠNG BOSS TRONG HANG
                     -- "Nếu Hang đang có Rương Boss: Teleport nhân vật đến đứng sát trước mặt rương Hang đó... chỉ cần tp sát rương là được rồi"
                     if chestObj and chestCF then
+                        if not STATE.IsAttackingCaveChest then
+                            logActivity("RƯƠNG_HANG", "Phát hiện Rương Boss Hang " .. targetCave .. " (UID: " .. chestObj.Name .. "). Tiếp cận phá rương...")
+                        end
                         STATE.IsAttackingCaveChest = true
                         STATE.CaveCFrames[targetCave] = chestCF
 
@@ -1789,6 +1981,9 @@ task.spawn(function()
 
                     -- TRƯỜNG HỢP 2B: RƯƠNG ĐÃ VỠ VÀ BẬT AUTO HATCH -> BẮT ĐẦU MỞ TRỨNG HANG ĐÓ
                     elseif STATE.AutoHatch then
+                        if STATE.IsAttackingCaveChest then
+                            logActivity("RƯƠNG_HANG", "Rương Hang " .. targetCave .. " đã vỡ xong! Chuyển sang mở trứng.")
+                        end
                         STATE.IsAttackingCaveChest = false
                         local eggObj, eggCF, eggId = getCaveEgg(targetCave)
 
@@ -1803,6 +1998,7 @@ task.spawn(function()
                             STATE.CaveHatchEggId = eggId
                             STATE.CaveHatchEggObj = eggObj
                             STATE.CaveHatchEggCF = eggCF
+                            logActivity("MỞ_TRỨNG", "Bắt đầu phiên mở trứng Hang " .. targetCave .. " (" .. tostring(eggId) .. ") trong 5 phút.")
 
                             -- Đứng sát cạnh trứng (cách 3.5 studs, không trèo lên bệ)
                             local standPos = eggCF.Position + Vector3.new(0, 0.5, 3.5)
@@ -1921,6 +2117,7 @@ task.spawn(function()
                         VirtualUser:ClickButton2(Vector2.new(60, 60))
                     end)
                 end
+                logActivity("ANTI_AFK", "Xung nhịp Heartbeat: Đã kích hoạt VirtualInput & reset Idle.")
             end
         end
     end)
@@ -1930,6 +2127,7 @@ task.spawn(function()
     local function triggerReconnect(reason)
         if isReconnecting or not STATE.AutoReconnect or not _G.PS99_SUMMIT_RUNNING then return end
         isReconnecting = true
+        logActivity("RECONNECT", "CẢNH BÁO MẤT KẾT NỐI: " .. tostring(reason) .. ". Đang chuẩn bị Reconnect sau 5s...")
         task.spawn(function()
             sendWebhook("⚠️ MẤT KẾT NỐI", (reason or "Phát hiện mất kết nối!") .. "\nĐang tự động kết nối lại sau 5 giây...", 15158332)
             task.wait(5)
@@ -2027,5 +2225,6 @@ task.spawn(function()
                 })
             end)
         end
+        logActivity("KHỞI_ĐỘNG", "PS99 Summit Suite V6 khởi động thành công trên tài khoản " .. Player.Name)
     end)
 end)
