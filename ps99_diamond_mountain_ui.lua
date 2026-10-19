@@ -532,7 +532,7 @@ local CAVE_DEFAULT_EGGS = {
     [6] = "Diamond Summit Egg",
 }
 
--- Lấy Model gốc của Trứng trong Workspace (Dùng để quét tên / tọa độ bất kể khóa hay mở)
+-- Lấy Model gốc của Trứng TRONG HANG (CHỈ LẤY TRỨNG THUỘC TRAIL / CAVE, LOẠI BỎ TRỨNG NGOÀI NÚI)
 local function getCaveEggModel(caveNum)
     caveNum = tonumber(caveNum) or STATE.SelectedCave
     local Things = workspace:FindFirstChild("__THINGS")
@@ -540,51 +540,59 @@ local function getCaveEggModel(caveNum)
     if not CustomEggs then return nil, nil, nil end
 
     local expectedEggName = CAVE_DEFAULT_EGGS[caveNum]
+    local caveCF = STATE.CaveCFrames[caveNum]
 
-    -- Ưu tiên 1: Quả trứng thường trong CustomEggs (BỎ QUA HugeRow/TitanicRow)
+    -- Hàm nhận diện trứng mua bằng Acorns bên ngoài núi (BẮT BUỘC LOẠI BỎ)
+    local function isOutsideAcornEgg(egg)
+        if egg:FindFirstChild("Acorns", true) then return true end
+        if egg:GetAttribute("DM_GargRow") ~= nil then return true end
+        for _, desc in pairs(egg:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Parent and desc.Parent.Name == "Acorns" then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- ƯU TIÊN SỐ 1 TUYỆT ĐỐI: Khớp DM_TrailEgg == caveNum (Đây chính là quả trứng nằm trong Hang / Trail!)
     for _, egg in pairs(CustomEggs:GetChildren()) do
-        local isHugeRow = (egg:GetAttribute("DM_TrailHugeRow") == true or egg:GetAttribute("DM_TrailTitanicRow") == true)
-        if not isHugeRow then
-            local trailNum = egg:GetAttribute("DM_TrailEgg")
+        local trailNum = egg:GetAttribute("DM_TrailEgg")
+        if trailNum and tonumber(trailNum) == tonumber(caveNum) then
             local attrEggId = egg:GetAttribute("DM_EggId")
             local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
-            if (expectedEggName and attrEggId and string.lower(tostring(attrEggId)) == string.lower(expectedEggName))
-               or (trailNum and tonumber(trailNum) == tonumber(caveNum))
-               or (expectedEggName and string.lower(tostring(egg.Name)) == string.lower(expectedEggName)) then
-                local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
-                local cf = part and part.CFrame or egg:GetPivot()
-                return egg, cf, cleanEggName
-            end
+            local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
+            local cf = part and part.CFrame or egg:GetPivot()
+            return egg, cf, cleanEggName
         end
     end
 
-    -- Ưu tiên 2: Bất kỳ trứng nào khớp DM_TrailEgg nhưng không phải Huge/Titanic
-    for _, egg in pairs(CustomEggs:GetChildren()) do
-        local isHugeRow = (egg:GetAttribute("DM_TrailHugeRow") == true or egg:GetAttribute("DM_TrailTitanicRow") == true)
-        if not isHugeRow then
-            local trailNum = egg:GetAttribute("DM_TrailEgg")
-            if trailNum and tonumber(trailNum) == tonumber(caveNum) then
-                local attrEggId = egg:GetAttribute("DM_EggId")
-                local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
-                local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
-                local cf = part and part.CFrame or egg:GetPivot()
-                return egg, cf, cleanEggName
-            end
-        end
-    end
-
-    -- Ưu tiên 3: Tìm theo DM_EggId khớp expectedEggName
-    if expectedEggName then
+    -- ƯU TIÊN SỐ 2: Quả trứng nằm trong bán kính 120 studs quanh Rương Hang (chắc chắn ở trong Hang)
+    if caveCF then
         for _, egg in pairs(CustomEggs:GetChildren()) do
-            local isHugeRow = (egg:GetAttribute("DM_TrailHugeRow") == true or egg:GetAttribute("DM_TrailTitanicRow") == true)
-            if not isHugeRow then
-                local attrEggId = egg:GetAttribute("DM_EggId")
-                if attrEggId and string.find(string.lower(tostring(attrEggId)), string.lower(expectedEggName)) then
-                    local cleanEggName = tostring(attrEggId)
-                    local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
-                    local cf = part and part.CFrame or egg:GetPivot()
+            if not isOutsideAcornEgg(egg) then
+                local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
+                local cf = part and part.CFrame or egg:GetPivot()
+                local dist = (cf.Position - caveCF.Position).Magnitude
+                if dist < 120 then
+                    local attrEggId = egg:GetAttribute("DM_EggId")
+                    local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
                     return egg, cf, cleanEggName
                 end
+            end
+        end
+    end
+
+    -- ƯU TIÊN SỐ 3: Tìm quả trứng khớp tên nhưng BẮT BUỘC KHÔNG PHẢI trứng Acorns ngoài núi
+    for _, egg in pairs(CustomEggs:GetChildren()) do
+        if not isOutsideAcornEgg(egg) then
+            local attrEggId = egg:GetAttribute("DM_EggId")
+            local nameMatch = (expectedEggName and attrEggId and string.lower(tostring(attrEggId)) == string.lower(expectedEggName))
+                           or (expectedEggName and string.lower(tostring(egg.Name)) == string.lower(expectedEggName))
+            if nameMatch then
+                local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
+                local cf = part and part.CFrame or egg:GetPivot()
+                local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
+                return egg, cf, cleanEggName
             end
         end
     end
@@ -2051,57 +2059,73 @@ task.spawn(function()
             amt = STATE.AutoMaxHatch and getMaxHatchAmount() or (tonumber(STATE.HatchAmount) or 58)
         end
 
-        -- 1. Xác định tên trứng chuẩn xác (String Name, TUYỆT ĐỐI không dùng hex UID)
-        local targetEggName = nil
+        local cleanEggName = nil
         if eggId and typeof(eggId) == "string" and string.len(eggId) > 0 and not string.match(eggId, "^[0-9a-fA-F]{20,}$") then
-            targetEggName = eggId
+            cleanEggName = eggId
         elseif eggObj and eggObj:GetAttribute("DM_EggId") then
-            targetEggName = tostring(eggObj:GetAttribute("DM_EggId"))
+            cleanEggName = tostring(eggObj:GetAttribute("DM_EggId"))
         elseif STATE.CaveHatchCaveNum and CAVE_DEFAULT_EGGS[STATE.CaveHatchCaveNum] then
-            targetEggName = CAVE_DEFAULT_EGGS[STATE.CaveHatchCaveNum]
+            cleanEggName = CAVE_DEFAULT_EGGS[STATE.CaveHatchCaveNum]
         elseif STATE.SelectedCave and CAVE_DEFAULT_EGGS[STATE.SelectedCave] then
-            targetEggName = CAVE_DEFAULT_EGGS[STATE.SelectedCave]
+            cleanEggName = CAVE_DEFAULT_EGGS[STATE.SelectedCave]
         end
-
-        if not targetEggName then return false end
 
         local okHatch = false
 
-        -- 2. Gọi RemoteFunction chuẩn của game: CustomEggs_Hatch (Số lượng tối đa)
+        -- 1. Gọi RemoteFunction CustomEggs_Hatch với UID của Model Trứng (Chuẩn xác nhất cho CustomEggs)
         if Network and Network.Invoke then
-            pcall(function()
-                local res = Network.Invoke("CustomEggs_Hatch", targetEggName, amt)
-                if res ~= nil then
-                    okHatch = true
-                end
-            end)
-
-            -- Fallback 1: Gọi Eggs_Hatch nếu CustomEggs_Hatch không phản hồi
-            if not okHatch then
+            if eggObj and eggObj.Name then
                 pcall(function()
-                    local res = Network.Invoke("Eggs_Hatch", targetEggName, amt)
-                    if res ~= nil then
-                        okHatch = true
-                    end
+                    local res = Network.Invoke("CustomEggs_Hatch", eggObj.Name, amt)
+                    if res ~= nil then okHatch = true end
+                end)
+            end
+
+            -- 2. Gọi RemoteFunction CustomEggs_Hatch với tên chữ của quả trứng
+            if cleanEggName and cleanEggName ~= (eggObj and eggObj.Name) then
+                pcall(function()
+                    local res = Network.Invoke("CustomEggs_Hatch", cleanEggName, amt)
+                    if res ~= nil then okHatch = true end
+                end)
+            end
+
+            -- 3. Fallback: Thử gọi Eggs_Hatch nếu CustomEggs_Hatch không phản hồi
+            if not okHatch and cleanEggName then
+                pcall(function()
+                    local res = Network.Invoke("Eggs_Hatch", cleanEggName, amt)
+                    if res ~= nil then okHatch = true end
                 end)
             end
         end
 
-        -- Fallback 2: Thử gọi qua Library.Client.EggCmds nếu có
+        -- 4. Fallback qua EggCmds nếu có
         if not okHatch and EggCmds and typeof(EggCmds) == "table" then
             pcall(function()
                 if EggCmds.Hatch then
-                    EggCmds.Hatch(targetEggName, amt)
+                    if eggObj and eggObj.Name then EggCmds.Hatch(eggObj.Name, amt) end
+                    if cleanEggName then EggCmds.Hatch(cleanEggName, amt) end
                     okHatch = true
                 elseif EggCmds.Purchase then
-                    EggCmds.Purchase(targetEggName, amt)
+                    if eggObj and eggObj.Name then EggCmds.Purchase(eggObj.Name, amt) end
+                    if cleanEggName then EggCmds.Purchase(cleanEggName, amt) end
                     okHatch = true
                 end
             end)
         end
 
-        -- Tuyệt đối KHÔNG gọi fireproximityprompt vì nó kích hoạt tương tác vật lý Roblox
-        -- gây khóa camera cutscene và chỉ mở 1 quả đơn lẻ.
+        -- 5. Fallback ProximityPrompt trên quả trứng trong hang
+        if not okHatch and eggObj then
+            pcall(function()
+                for _, pp in pairs(eggObj:GetDescendants()) do
+                    if pp:IsA("ProximityPrompt") and pp.Enabled then
+                        if fireproximityprompt then
+                            fireproximityprompt(pp)
+                            okHatch = true
+                        end
+                    end
+                end
+            end)
+        end
 
         return okHatch
     end
