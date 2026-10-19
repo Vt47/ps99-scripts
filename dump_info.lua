@@ -10,7 +10,18 @@ local RS = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
 local Player = Players.LocalPlayer
 
-local WEBHOOK = "https://discord.com/api/webhooks/1557705516178874429/DSxD6hH0VRjmXxBB44kQVM3VDhNvUwTp7h4uTCCtZK1k4vOLyOxLtjAfwxK2mCSS0MFb"
+local WEBHOOK = ""
+pcall(function()
+    if readfile and isfile and isfile("PS99_Summit_Config.json") then
+        local raw = readfile("PS99_Summit_Config.json")
+        if raw and raw ~= "" then
+            local data = HttpService:JSONDecode(raw)
+            if data and data.Webhook and data.Webhook ~= "" then
+                WEBHOOK = data.Webhook
+            end
+        end
+    end
+end)
 
 local logLines = {}
 local function log(str)
@@ -88,6 +99,10 @@ local function splitIntoChunks(str, maxLen)
 end
 
 local function sendChunkedWebhook(rawUrl, fullContent)
+    if not rawUrl or rawUrl == "" then
+        log("==> Không tìm thấy Webhook trong cấu hình. Bỏ qua gửi Discord (chỉ lưu file & copy clipboard).")
+        return
+    end
     local chunks = splitIntoChunks(fullContent, 1700)
     local total = #chunks
     log(string.format("==> Đang gửi dữ liệu về Discord (%d phần)...", total))

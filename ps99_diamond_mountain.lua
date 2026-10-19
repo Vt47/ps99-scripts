@@ -14,7 +14,7 @@
 -- CẤU HÌNH SCRIPT (TÙY CHỈNH THEO NHU CẦU CỦA BẠN)
 local CONFIG = {
     -- [DISCORD WEBHOOK]
-    Webhook = "https://discord.com/api/webhooks/1557705516178874429/DSxD6hH0VRjmXxBB44kQVM3VDhNvUwTp7h4uTCCtZK1k4vOLyOxLtjAfwxK2mCSS0MFb",
+    Webhook = "",
     
     -- Điền Discord User ID của bạn (Ví dụ: "123456789012345678") để bot ping thẳng vào bạn trên Discord
     -- Để trống "" nếu không muốn bị tag/ping

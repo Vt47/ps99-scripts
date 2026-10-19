@@ -161,7 +161,7 @@ local STATE = {
     LowCpuMode = false,
 
     -- [DISCORD WEBHOOK]
-    Webhook = "https://discord.com/api/webhooks/1557705516178874429/DSxD6hH0VRjmXxBB44kQVM3VDhNvUwTp7h4uTCCtZK1k4vOLyOxLtjAfwxK2mCSS0MFb",
+    Webhook = "",
     DiscordUserId = "",
     NotifyOnHuge = true,
     MentionOnHuge = true,
@@ -1412,6 +1412,58 @@ local function createInfoCard(parent, title, defaultText)
     return Value
 end
 
+local function createTextInput(parent, title, placeholder, defaultVal, callback)
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(1, 0, 0, 56)
+    Frame.BackgroundColor3 = Color3.fromRGB(24, 28, 40)
+    Frame.Parent = parent
+
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 8)
+    Corner.Parent = Frame
+
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(1, -20, 0, 20)
+    Label.Position = UDim2.new(0, 10, 0, 4)
+    Label.BackgroundTransparency = 1
+    Label.Text = title
+    Label.TextColor3 = Color3.fromRGB(210, 215, 230)
+    Label.Font = Enum.Font.GothamMedium
+    Label.TextSize = 11
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Parent = Frame
+
+    local Box = Instance.new("TextBox")
+    Box.Size = UDim2.new(1, -20, 0, 24)
+    Box.Position = UDim2.new(0, 10, 0, 26)
+    Box.BackgroundColor3 = Color3.fromRGB(16, 18, 26)
+    Box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Box.PlaceholderColor3 = Color3.fromRGB(120, 125, 140)
+    Box.PlaceholderText = placeholder or "Dán vào đây..."
+    Box.Text = defaultVal or ""
+    Box.Font = Enum.Font.Gotham
+    Box.TextSize = 10
+    Box.ClearTextOnFocus = false
+    Box.Parent = Frame
+
+    local BoxCorner = Instance.new("UICorner")
+    BoxCorner.CornerRadius = UDim.new(0, 5)
+    BoxCorner.Parent = Box
+
+    local BoxStroke = Instance.new("UIStroke")
+    BoxStroke.Color = Color3.fromRGB(45, 55, 80)
+    BoxStroke.Thickness = 1
+    BoxStroke.Parent = Box
+
+    Box.FocusLost:Connect(function(enterPressed)
+        if callback then
+            callback(Box.Text)
+        end
+    end)
+
+    return Box
+end
+
 -- TRANG 1: DASHBOARD
 lblAction = createInfoCard(DashboardPage, "⚡ Hoạt Động:", STATE.CurrentAction)
 lblCaveTimer = createInfoCard(DashboardPage, "⏳ Thời Gian Mở Hang:", "Đang quét...")
@@ -1830,6 +1882,29 @@ updateLogsUI = function()
 end
 
 -- TRANG 6: CÀI ĐẶT
+local webhookBox = createTextInput(SettingsPage, "🔗 Discord Webhook URL (Bảo mật - Tự lưu vào máy):", "Dán link Webhook vào đây...", STATE.Webhook, function(v)
+    STATE.Webhook = v
+    saveConfig()
+end)
+
+local userBox = createTextInput(SettingsPage, "👤 Discord User ID (Tag cá nhân khi trúng Huge):", "Ví dụ: 123456789012345678 (hoặc để trống)", STATE.DiscordUserId, function(v)
+    STATE.DiscordUserId = v
+    saveConfig()
+end)
+
+createActionButton(SettingsPage, "💾 Lưu Cấu Hình Webhook Ngay", Color3.fromRGB(40, 140, 90), function()
+    if webhookBox then STATE.Webhook = webhookBox.Text end
+    if userBox then STATE.DiscordUserId = userBox.Text end
+    saveConfig()
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "✅ Đã Lưu Webhook",
+            Text = "Đã lưu Webhook vào file cấu hình trên máy thành công!",
+            Duration = 3
+        })
+    end)
+end)
+
 createToggle(SettingsPage, "🛡️ Anti-AFK (Chống văng 20 phút)", STATE.AntiAFK, function(v)
     STATE.AntiAFK = v
     if v then disableIdledConnections() end
