@@ -520,11 +520,13 @@ local function getMaxHatchAmount()
     return math.max(1, maxAmt or 58)
 end
 
+local handleEggOpeningVisuals = function() end
+
 -- Bảng tên trứng mặc định của 6 Hang Núi Kim Cương
 local CAVE_DEFAULT_EGGS = {
     [1] = "Frosted Geode Egg",
     [2] = "Diamond Cat Egg",
-    [3] = "Diamond Dog Egg",
+    [3] = "Boulder Ridge Egg",
     [4] = "Eagle Crag Egg",
     [5] = "Frostline Egg",
     [6] = "Diamond Summit Egg",
@@ -544,30 +546,53 @@ local function getCaveEggModel(caveNum)
         local isHugeRow = (egg:GetAttribute("DM_TrailHugeRow") == true or egg:GetAttribute("DM_TrailTitanicRow") == true)
         if not isHugeRow then
             local trailNum = egg:GetAttribute("DM_TrailEgg")
-            local eggId = tostring(egg:GetAttribute("DM_EggId") or egg.Name)
-            if (trailNum and tonumber(trailNum) == tonumber(caveNum)) or (expectedEggName and eggId == expectedEggName) then
+            local attrEggId = egg:GetAttribute("DM_EggId")
+            local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
+            if (expectedEggName and attrEggId and string.lower(tostring(attrEggId)) == string.lower(expectedEggName))
+               or (trailNum and tonumber(trailNum) == tonumber(caveNum))
+               or (expectedEggName and string.lower(tostring(egg.Name)) == string.lower(expectedEggName)) then
                 local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
                 local cf = part and part.CFrame or egg:GetPivot()
-                return egg, cf, eggId
+                return egg, cf, cleanEggName
             end
         end
     end
 
-    -- Ưu tiên 2: Bất kỳ trứng nào khớp DM_TrailEgg
+    -- Ưu tiên 2: Bất kỳ trứng nào khớp DM_TrailEgg nhưng không phải Huge/Titanic
     for _, egg in pairs(CustomEggs:GetChildren()) do
-        local trailNum = egg:GetAttribute("DM_TrailEgg")
-        if trailNum and tonumber(trailNum) == tonumber(caveNum) then
-            local eggId = tostring(egg:GetAttribute("DM_EggId") or egg.Name)
-            local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
-            local cf = part and part.CFrame or egg:GetPivot()
-            return egg, cf, eggId
+        local isHugeRow = (egg:GetAttribute("DM_TrailHugeRow") == true or egg:GetAttribute("DM_TrailTitanicRow") == true)
+        if not isHugeRow then
+            local trailNum = egg:GetAttribute("DM_TrailEgg")
+            if trailNum and tonumber(trailNum) == tonumber(caveNum) then
+                local attrEggId = egg:GetAttribute("DM_EggId")
+                local cleanEggName = (attrEggId and tostring(attrEggId)) or expectedEggName or tostring(egg.Name)
+                local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
+                local cf = part and part.CFrame or egg:GetPivot()
+                return egg, cf, cleanEggName
+            end
+        end
+    end
+
+    -- Ưu tiên 3: Tìm theo DM_EggId khớp expectedEggName
+    if expectedEggName then
+        for _, egg in pairs(CustomEggs:GetChildren()) do
+            local isHugeRow = (egg:GetAttribute("DM_TrailHugeRow") == true or egg:GetAttribute("DM_TrailTitanicRow") == true)
+            if not isHugeRow then
+                local attrEggId = egg:GetAttribute("DM_EggId")
+                if attrEggId and string.find(string.lower(tostring(attrEggId)), string.lower(expectedEggName)) then
+                    local cleanEggName = tostring(attrEggId)
+                    local part = egg:FindFirstChild("Center") or egg:FindFirstChild("Egg") or egg:FindFirstChildWhichIsA("BasePart", true)
+                    local cf = part and part.CFrame or egg:GetPivot()
+                    return egg, cf, cleanEggName
+                end
+            end
         end
     end
 
     return nil, nil, expectedEggName
 end
 
--- Kiểm tra xem Trứng có đang mở (không bị khóa bởi PriceHUDLocked, EggLock, TextLabel 'Locked')
+-- Kiểm tra xem Trứng có đang mở (không bị khóa bởi TextLabel 'Locked', PriceHUDLocked)
 local function isEggUnlocked(eggObj)
     if not eggObj or not eggObj.Parent then return false end
 
@@ -586,21 +611,11 @@ local function isEggUnlocked(eggObj)
                 elseif desc:IsA("GuiObject") and desc.Visible then
                     isLocked = true
                     return
-                elseif desc:IsA("BasePart") and desc.Transparency < 0.5 then
-                    isLocked = true
-                    return
                 end
             end
         end
 
-        -- 2. Kiểm tra ổ khóa EggLock (khi khóa thường rõ ràng với Transparency = 0)
-        local eggLock = eggObj:FindFirstChild("EggLock", true)
-        if eggLock and eggLock:IsA("BasePart") and eggLock.Transparency < 0.3 then
-            isLocked = true
-            return
-        end
-
-        -- 3. Kiểm tra Attribute Locked
+        -- 2. Kiểm tra Attribute Locked
         if eggObj:GetAttribute("Locked") == true or eggObj:GetAttribute("IsLocked") == true then
             isLocked = true
             return
@@ -1184,7 +1199,14 @@ createActionButton(TrailsPage, "🔍 Quét Quả Trứng Đang Đứng Trước 
                         local dist = (part.Position - hrp.Position).Magnitude
                         if dist < minDist then
                             minDist = dist
-                            found = egg:GetAttribute("DM_EggId") or egg.Name
+                            local aId = egg:GetAttribute("DM_EggId")
+                            if aId and tostring(aId) ~= "" then
+                                found = tostring(aId)
+                            elseif not string.match(egg.Name, "^[0-9a-fA-F]{20,}$") then
+                                found = egg.Name
+                            elseif CAVE_DEFAULT_EGGS[STATE.SelectedCave] then
+                                found = CAVE_DEFAULT_EGGS[STATE.SelectedCave]
+                            end
                         end
                     end
                 end
@@ -1369,7 +1391,11 @@ createActionButton(TrailsPage, "🔄 Đặt Lại Chu Kỳ Mở Trứng Hang (Đ
     logActivity("MỞ_TRỨNG", "Người dùng đã thủ công đặt lại chu kỳ mở trứng Hang " .. STATE.SelectedCave .. ".")
 end)
 createToggle(TrailsPage, "🎁 Hiện Pop-up Kết Quả (Tự đóng sau 1.2s)", STATE.ShowHatchPopup, function(v) STATE.ShowHatchPopup = v end)
-createToggle(TrailsPage, "⏩ Bỏ Qua Cắt Cảnh (Skip Cutscene Animation)", STATE.SkipAnimation, function(v) STATE.SkipAnimation = v end)
+createToggle(TrailsPage, "⏩ Bỏ Qua Cắt Cảnh (Skip Cutscene Animation)", STATE.SkipAnimation, function(v)
+    STATE.SkipAnimation = v
+    saveConfig()
+    if v and handleEggOpeningVisuals then handleEggOpeningVisuals() end
+end)
 
 -- TRANG 4: BÃI FARM TIỀN
 createToggle(FarmPage, "💰 Tự Động Về Farm Tiền (Khi không mở trứng)", STATE.AutoFarmMoney, function(v) STATE.AutoFarmMoney = v end)
@@ -1890,26 +1916,96 @@ task.spawn(function()
     end
     lastPetCount = getInventoryPetCount()
 
-    -- XỬ LÝ POP-UP VÀ BỎ QUA CẮT CẢNH MỞ TRỨNG (NON-DESTRUCTIVE)
-    local function handleEggOpeningVisuals()
+    -- XỬ LÝ POP-UP VÀ BỎ QUA TOÀN BỘ CẮT CẢNH MỞ TRỨNG (ANIMATION BYPASS)
+    handleEggOpeningVisuals = function()
         pcall(function()
             if STATE.SkipAnimation then
+                -- 1. Hook / Override ModuleScript 'Egg Opening Frontend'
                 local ps = Player:FindFirstChild("PlayerScripts")
-                local gameScripts = ps and ps:FindFirstChild("Scripts") and ps.Scripts:FindFirstChild("Game")
-                if gameScripts then
-                    local eggFrontend = gameScripts:FindFirstChild("Egg Opening Frontend")
-                    if eggFrontend and getsenv then
-                        local env = getsenv(eggFrontend)
-                        if env and env.PlayEggAnimation then
-                            env.PlayEggAnimation = function() return end
+                local eggFrontend = ps and (
+                    (ps:FindFirstChild("Scripts") and ps.Scripts:FindFirstChild("Game") and ps.Scripts.Game:FindFirstChild("Egg Opening Frontend"))
+                    or ps:FindFirstChild("Egg Opening Frontend", true)
+                )
+
+                if eggFrontend then
+                    -- Phương pháp A: getsenv
+                    if getsenv then
+                        pcall(function()
+                            local env = getsenv(eggFrontend)
+                            if env then
+                                if env.PlayEggAnimation then
+                                    if hookfunction then
+                                        pcall(function() hookfunction(env.PlayEggAnimation, function(...) return end) end)
+                                    end
+                                    env.PlayEggAnimation = function(...) return end
+                                end
+                                if env.PlayAnimation then
+                                    if hookfunction then
+                                        pcall(function() hookfunction(env.PlayAnimation, function(...) return end) end)
+                                    end
+                                    env.PlayAnimation = function(...) return end
+                                end
+                                if env.Hatch then env.Hatch = function(...) return end end
+                                if env.OpenEgg then env.OpenEgg = function(...) return end end
+                            end
+                        end)
+                    end
+                    -- Phương pháp B: require
+                    pcall(function()
+                        local mod = require(eggFrontend)
+                        if typeof(mod) == "table" then
+                            if mod.PlayEggAnimation then
+                                if hookfunction then
+                                    pcall(function() hookfunction(mod.PlayEggAnimation, function(...) return end) end)
+                                end
+                                mod.PlayEggAnimation = function(...) return end
+                            end
+                            if mod.PlayAnimation then
+                                if hookfunction then
+                                    pcall(function() hookfunction(mod.PlayAnimation, function(...) return end) end)
+                                end
+                                mod.PlayAnimation = function(...) return end
+                            end
+                            if mod.Hatch then mod.Hatch = function(...) return end end
+                            if mod.OpenEgg then mod.OpenEgg = function(...) return end end
                         end
+                    end)
+                end
+
+                -- Hook Client.EggCmds nếu có
+                pcall(function()
+                    if EggCmds and typeof(EggCmds) == "table" then
+                        if EggCmds.PlayEggAnimation then EggCmds.PlayEggAnimation = function(...) return end end
+                        if EggCmds.PlayAnimation then EggCmds.PlayAnimation = function(...) return end end
+                    end
+                end)
+
+                -- 2. Đóng / ẩn các ScreenGui cutscene mở trứng trong PlayerGui
+                local pg = Player:FindFirstChild("PlayerGui")
+                if pg then
+                    for _, gName in ipairs({"EggOpening", "Eggs", "EggOpeningFrontend", "EggHatch", "Hatch", "CustomEggOpening", "EggOpeningUi"}) do
+                        local g = pg:FindFirstChild(gName)
+                        if g and g:IsA("ScreenGui") and g.Enabled then
+                            g.Enabled = false
+                        end
+                    end
+                end
+
+                -- 3. Reset camera nếu camera bị khoá vào cutscene
+                local cam = workspace.CurrentCamera
+                if cam and cam.CameraType ~= Enum.CameraType.Custom then
+                    cam.CameraType = Enum.CameraType.Custom
+                    local char = Player.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    if hum then
+                        cam.CameraSubject = hum
                     end
                 end
             end
 
             -- Tự động đóng pop-up thông báo an toàn ("Ok!", "Ok", "Continue")
             task.spawn(function()
-                task.wait(0.15)
+                task.wait(0.1)
                 for _, btn in pairs(Player.PlayerGui:GetDescendants()) do
                     if btn:IsA("TextButton") and btn.Visible then
                         local bText = string.lower(btn.Text)
@@ -1944,46 +2040,68 @@ task.spawn(function()
         end)
     end
 
+    -- Kích hoạt chặn animation ngay lập tức khi khởi động
+    if STATE.SkipAnimation then
+        handleEggOpeningVisuals()
+    end
+
     -- HÀM MỞ TRỨNG CUSTOM EGG CHUẨN CỦA ĐỈNH NÚI
     local function hatchCustomEgg(eggObj, eggId, amt)
         if not amt or amt <= 0 then
             amt = STATE.AutoMaxHatch and getMaxHatchAmount() or (tonumber(STATE.HatchAmount) or 58)
         end
+
+        -- 1. Xác định tên trứng chuẩn xác (String Name, TUYỆT ĐỐI không dùng hex UID)
+        local targetEggName = nil
+        if eggId and typeof(eggId) == "string" and string.len(eggId) > 0 and not string.match(eggId, "^[0-9a-fA-F]{20,}$") then
+            targetEggName = eggId
+        elseif eggObj and eggObj:GetAttribute("DM_EggId") then
+            targetEggName = tostring(eggObj:GetAttribute("DM_EggId"))
+        elseif STATE.CaveHatchCaveNum and CAVE_DEFAULT_EGGS[STATE.CaveHatchCaveNum] then
+            targetEggName = CAVE_DEFAULT_EGGS[STATE.CaveHatchCaveNum]
+        elseif STATE.SelectedCave and CAVE_DEFAULT_EGGS[STATE.SelectedCave] then
+            targetEggName = CAVE_DEFAULT_EGGS[STATE.SelectedCave]
+        end
+
+        if not targetEggName then return false end
+
         local okHatch = false
 
-        -- 1. Gọi RemoteFunction chuẩn của game: CustomEggs_Hatch (Số lượng tối đa)
+        -- 2. Gọi RemoteFunction chuẩn của game: CustomEggs_Hatch (Số lượng tối đa)
         if Network and Network.Invoke then
-            local invoked = false
             pcall(function()
-                if eggObj and eggObj.Name then
-                    local res = Network.Invoke("CustomEggs_Hatch", eggObj.Name, amt)
-                    invoked = (res ~= nil)
+                local res = Network.Invoke("CustomEggs_Hatch", targetEggName, amt)
+                if res ~= nil then
                     okHatch = true
                 end
             end)
-            if not invoked then
+
+            -- Fallback 1: Gọi Eggs_Hatch nếu CustomEggs_Hatch không phản hồi
+            if not okHatch then
                 pcall(function()
-                    if eggId and eggId ~= "" and eggId ~= (eggObj and eggObj.Name) then
-                        Network.Invoke("CustomEggs_Hatch", eggId, amt)
+                    local res = Network.Invoke("Eggs_Hatch", targetEggName, amt)
+                    if res ~= nil then
                         okHatch = true
                     end
                 end)
             end
         end
 
-        -- 2. Tương tác ProximityPrompt trên quả trứng nếu Network invoke chưa chạy
-        if not okHatch and eggObj then
+        -- Fallback 2: Thử gọi qua Library.Client.EggCmds nếu có
+        if not okHatch and EggCmds and typeof(EggCmds) == "table" then
             pcall(function()
-                for _, pp in pairs(eggObj:GetDescendants()) do
-                    if pp:IsA("ProximityPrompt") and pp.Enabled then
-                        if fireproximityprompt then
-                            fireproximityprompt(pp)
-                            okHatch = true
-                        end
-                    end
+                if EggCmds.Hatch then
+                    EggCmds.Hatch(targetEggName, amt)
+                    okHatch = true
+                elseif EggCmds.Purchase then
+                    EggCmds.Purchase(targetEggName, amt)
+                    okHatch = true
                 end
             end)
         end
+
+        -- Tuyệt đối KHÔNG gọi fireproximityprompt vì nó kích hoạt tương tác vật lý Roblox
+        -- gây khóa camera cutscene và chỉ mở 1 quả đơn lẻ.
 
         return okHatch
     end
@@ -2072,14 +2190,16 @@ task.spawn(function()
                     local elapsed = os.time() - STATE.CaveHatchStartTime
                     local timeLeft = math.max(0, STATE.CaveHatchDuration - elapsed)
 
-                    -- Kiểm tra xem bệ trứng còn tồn tại và còn mở không
+                    -- Lấy bệ trứng (nếu không tìm thấy thì dùng bệ trứng đã lưu khi bắt đầu phiên)
                     local eggObj, eggCF, eggId = getCaveEggModel(STATE.CaveHatchCaveNum)
-                    if not eggObj or eggObj.Parent == nil or not isEggUnlocked(eggObj) then
-                        timeLeft = 0 -- Trứng đã bị khóa hoặc biến mất khỏi Workspace
+                    if not eggObj then eggObj = STATE.CaveHatchEggObj end
+                    if not eggCF then eggCF = STATE.CaveHatchEggCF end
+                    if not eggId or eggId == "" or string.match(tostring(eggId), "^[0-9a-fA-F]{20,}$") then
+                        eggId = STATE.CaveHatchEggId or CAVE_DEFAULT_EGGS[STATE.CaveHatchCaveNum]
                     end
 
                     if timeLeft <= 0 then
-                        -- KẾT THÚC PHIÊN MỞ TRỨNG (MỞ ĐỦ 5 PHÚT HOẶC TRỨNG ĐÓNG)
+                        -- KẾT THÚC PHIÊN MỞ TRỨNG (MỞ ĐỦ 5 PHÚT)
                         STATE.CaveHatchActive = false
                         if STATE.CaveHatchedForThisCycle then
                             STATE.CaveHatchedForThisCycle[STATE.CaveHatchCaveNum] = true
@@ -2114,6 +2234,9 @@ task.spawn(function()
                         local timeStr = string.format("%d:%02d", mins, secs)
                         local curHatchAmt = STATE.AutoMaxHatch and getMaxHatchAmount() or (tonumber(STATE.HatchAmount) or 58)
                         STATE.CurrentAction = "🥚 Đang mở trứng Hang " .. STATE.CaveHatchCaveNum .. " (" .. tostring(eggId) .. " x" .. curHatchAmt .. ") | Còn: " .. timeStr
+
+                        -- BỎ QUA ANIMATION TRƯỚC KHI GỌI REMOTE
+                        handleEggOpeningVisuals()
 
                         -- GỌI HÀM MỞ TRỨNG (CustomEggs_Hatch)
                         local hatchedThisCycle = hatchCustomEgg(eggObj, eggId, curHatchAmt)
@@ -2203,6 +2326,15 @@ task.spawn(function()
                     -- TRƯỜNG HỢP 2C: KHÔNG CÒN RƯƠNG VÀ BẬT AUTO HATCH -> BẮT ĐẦU MỞ TRỨNG
                     elseif STATE.AutoHatch then
                         local eggObj, eggCF, eggId = getCaveEgg(targetCave)
+
+                        -- Fallback nếu getCaveEgg bị chậm 1 nhịp do UI vừa mở
+                        if not eggObj and not (STATE.CaveHatchedForThisCycle and STATE.CaveHatchedForThisCycle[targetCave]) then
+                            local mObj, mCF, mId = getCaveEggModel(targetCave)
+                            local isUnlocked, isCooldown = getCaveSignInfo(targetCave)
+                            if not isCooldown and mObj and mCF then
+                                eggObj, eggCF, eggId = mObj, mCF, mId
+                            end
+                        end
 
                         if eggObj and eggCF and eggId then
                             STATE.CaveCFrames[targetCave] = eggCF
