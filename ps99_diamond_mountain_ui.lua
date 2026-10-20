@@ -30,8 +30,9 @@ local Player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local Camera = workspace.CurrentCamera
 
 local Library, Client, Directory, Save, PetDirectory, Network, EggCmds
-local lblAction, lblCaveTimer, lblYetiStatus, lblYetiCount, lblHatchedEggs, lblDiamonds, lblDiffDiamonds, lblUptime, lblPets
+local lblAction, lblCaveTimer, lblYetiStatus, lblYetiCount, lblHatchedEggs, lblDiamonds, lblDiffDiamonds, lblUptime, lblPets, lblSelectedCaves
 local formatNumber, formatDuration, getDiamonds, getPetCategory, getPetVariantText, triggerRarePetAlert
+local getSelectedCavesList, formatSelectedCavesText, getBestActiveCave, pickNextCaveAfterHatch, updateCaveButtonsUI
 pcall(function()
     Library = RS:FindFirstChild("Library") or RS:WaitForChild("Library", 5)
     if Library then
@@ -110,6 +111,14 @@ local STATE = {
 
     -- [HANG NÚI & TRỨNG]
     SelectedCave = 1,
+    SelectedCaves = {
+        [1] = true,
+        [2] = false,
+        [3] = false,
+        [4] = false,
+        [5] = false,
+        [6] = false,
+    },
     AutoCaveChests = false,
     IsAttackingCaveChest = false,
     CurrentChestObj = nil,
@@ -546,6 +555,7 @@ local function saveConfig()
         end
         local data = {
             SelectedCave = STATE.SelectedCave,
+            SelectedCaves = STATE.SelectedCaves,
             FarmCFrame = cframeToTable(STATE.FarmCFrame),
             YetiArenaCFrame = cframeToTable(STATE.YetiArenaCFrame),
             CaveCFrames = caveTbl,
@@ -581,6 +591,23 @@ local function loadConfig()
         if not data or type(data) ~= "table" then return end
         
         if data.SelectedCave then STATE.SelectedCave = tonumber(data.SelectedCave) or STATE.SelectedCave end
+        if data.SelectedCaves and type(data.SelectedCaves) == "table" then
+            STATE.SelectedCaves = {}
+            local hasAny = false
+            for i = 1, 6 do
+                local val = data.SelectedCaves[i]
+                if val == nil then val = data.SelectedCaves[tostring(i)] end
+                if val == true then
+                    STATE.SelectedCaves[i] = true
+                    hasAny = true
+                else
+                    STATE.SelectedCaves[i] = false
+                end
+            end
+            if not hasAny then
+                STATE.SelectedCaves[STATE.SelectedCave or 1] = true
+            end
+        end
         if data.FarmCFrame then
             local cf = tableToCFrame(data.FarmCFrame)
             if cf then STATE.FarmCFrame = cf end
@@ -698,6 +725,35 @@ end
 --========================================================================
 -- ĐIỀU PHỐI HANG, RƯƠNG & TRỨNG (CHUẨN HÓA 100% DỰA TRÊN DUMP_INFO)
 --========================================================================
+
+-- Lấy danh sách số thứ tự các hang đang được chọn (1-6)
+getSelectedCavesList = function()
+    local list = {}
+    if not STATE.SelectedCaves or type(STATE.SelectedCaves) ~= "table" then
+        STATE.SelectedCaves = { [STATE.SelectedCave or 1] = true }
+    end
+    for i = 1, 6 do
+        if STATE.SelectedCaves[i] == true then
+            table.insert(list, i)
+        end
+    end
+    if #list == 0 then
+        local def = tonumber(STATE.SelectedCave) or 1
+        STATE.SelectedCaves[def] = true
+        table.insert(list, def)
+    end
+    return list
+end
+
+-- Định dạng danh sách hang thành chuỗi hiển thị gọn gàng (VD: "Hang 3, Hang 4, Hang 5")
+formatSelectedCavesText = function()
+    local list = getSelectedCavesList()
+    local names = {}
+    for _, c in ipairs(list) do
+        table.insert(names, "Hang " .. c)
+    end
+    return table.concat(names, ", ")
+end
 
 -- Lấy đối tượng và CFrame Rương Boss của Hang (Trail 1-6, ưu tiên rương gần nhân vật nhất)
 local function getCaveChest(caveNum)
@@ -943,10 +999,10 @@ local function getCaveSignInfo(caveNum)
         end
     end)
 
-    -- Tự động reset cờ chu kỳ đã mở trứng khi rương Boss mới xuất hiện trong hang
+    -- Tự động reset cờ chu kỳ đã mở trứng khi rương Boss mới xuất hiện hoặc hang mở khóa
     if STATE.CaveHatchedForThisCycle and STATE.CaveHatchedForThisCycle[caveNum] then
         local cObj = getCaveChest(caveNum)
-        if cObj then
+        if cObj or (isUnlocked and not isCooldown) then
             STATE.CaveHatchedForThisCycle[caveNum] = false
         end
     end
@@ -1022,37 +1078,131 @@ end
 -- Đếm ngược / Trạng thái hiển thị Dashboard
 local function getCaveOpenCountdown(caveNum)
     caveNum = tonumber(caveNum) or STATE.SelectedCave
+    local selected = getSelectedCavesList()
 
-    if STATE.CaveHatchActive and STATE.CaveHatchCaveNum == caveNum then
+    if STATE.CaveHatchActive and STATE.CaveHatchCaveNum then
         local elapsed = os.time() - STATE.CaveHatchStartTime
         local rem = math.max(0, STATE.CaveHatchDuration - elapsed)
         local m = math.floor(rem / 60)
         local s = rem % 60
-        return string.format("🟢 Mở Trứng (Còn %d:%02d)", m, s)
+        return string.format("🟢 H%d: Mở Trứng (Còn %d:%02d)", STATE.CaveHatchCaveNum, m, s)
     end
 
     local cObj = getCaveChest(caveNum)
     if cObj then
-        return "🟢 Sẵn Sàng (Có Rương Boss)"
+        return string.format("🟢 H%d: Có Rương Boss", caveNum)
     end
 
     local eObj, _, eId = getCaveEgg(caveNum)
     if eObj then
-        return "🟢 Sẵn Sàng (Trứng " .. tostring(eId) .. ")"
+        return string.format("🟢 H%d: Trứng Sẵn Sàng (%s)", caveNum, tostring(eId))
+    end
+
+    -- Nếu có nhiều hang được chọn, kiểm tra xem có hang nào khác trong danh sách đang sẵn sàng không
+    if #selected > 1 then
+        for _, c in ipairs(selected) do
+            if c ~= caveNum then
+                local otherChest = getCaveChest(c)
+                if otherChest then
+                    return string.format("🟢 H%d: Có Rương Boss", c)
+                end
+                local otherEgg = getCaveEgg(c)
+                if otherEgg then
+                    return string.format("🟢 H%d: Trứng Sẵn Sàng", c)
+                end
+            end
+        end
     end
 
     local isUnlocked, isCooldown, remSec, signText = getCaveSignInfo(caveNum)
     if isCooldown and remSec and remSec > 0 then
         local m = math.floor(remSec / 60)
         local s = remSec % 60
-        return string.format("⏳ Mở sau %d:%02d", m, s)
+        return string.format("⏳ H%d: Mở sau %d:%02d", caveNum, m, s)
     elseif isCooldown and signText ~= "" then
-        return "⏳ " .. signText
+        return string.format("⏳ H%d: %s", caveNum, signText)
     elseif isUnlocked then
-        return "🟢 Sẵn Sàng (Hang Mở)"
+        return string.format("🟢 H%d: Sẵn Sàng (Hang Mở)", caveNum)
     end
 
     return "⏳ Đang Chờ Hồi / Quét..."
+end
+
+-- Tìm hang ưu tiên tiếp theo trong danh sách các hang đã chọn
+getBestActiveCave = function()
+    local selected = getSelectedCavesList()
+    if #selected == 1 then
+        return selected[1], nil
+    end
+
+    local startIdx = 1
+    for idx, c in ipairs(selected) do
+        if c == STATE.SelectedCave then
+            startIdx = idx
+            break
+        end
+    end
+
+    -- 1. Ưu tiên cao nhất: Bất kỳ hang nào trong danh sách đang có RƯƠNG BOSS
+    for i = 0, #selected - 1 do
+        local checkIdx = ((startIdx - 1 + i) % #selected) + 1
+        local c = selected[checkIdx]
+        local chestObj, chestCF = getCaveChest(c)
+        if chestObj and chestCF then
+            return c, "chest", chestObj, chestCF
+        end
+    end
+
+    -- 2. Ưu tiên nhì: Hang nào đang có TRỨNG MỞ ĐƯỢC (chưa hoàn thành phiên 5p ở chu kỳ này)
+    for i = 0, #selected - 1 do
+        local checkIdx = ((startIdx - 1 + i) % #selected) + 1
+        local c = selected[checkIdx]
+        if not (STATE.CaveHatchedForThisCycle and STATE.CaveHatchedForThisCycle[c]) then
+            local eggObj, eggCF, eggId = getCaveEgg(c)
+            if eggObj and eggCF and eggId then
+                return c, "egg", eggObj, eggCF, eggId
+            end
+        end
+    end
+
+    -- 3. Tất cả các hang đã chọn đều đang cooldown / đã hoàn thành mở trứng chu kỳ này
+    return STATE.SelectedCave or selected[1], "cooldown"
+end
+
+-- Chọn hang kế tiếp sau khi hoàn tất phiên mở trứng 5 phút
+pickNextCaveAfterHatch = function(finishedCave)
+    local selected = getSelectedCavesList()
+    if #selected <= 1 then return finishedCave end
+
+    local startIdx = 1
+    for idx, c in ipairs(selected) do
+        if c == finishedCave then
+            startIdx = idx
+            break
+        end
+    end
+
+    -- Quét từ hang kế tiếp sau finishedCave
+    for i = 1, #selected do
+        local checkIdx = ((startIdx - 1 + i) % #selected) + 1
+        local c = selected[checkIdx]
+        -- Kiểm tra rương trước
+        local chestObj, chestCF = getCaveChest(c)
+        if chestObj and chestCF then
+            return c
+        end
+        -- Kiểm tra trứng
+        if not (STATE.CaveHatchedForThisCycle and STATE.CaveHatchedForThisCycle[c]) then
+            local eggObj, eggCF, eggId = getCaveEgg(c)
+            if eggObj and eggCF and eggId then
+                return c
+            end
+        end
+    end
+
+    -- Nếu tất cả đang cooldown, chọn hang kế tiếp theo thứ tự vòng tròn
+    local nextIdx = (startIdx % #selected) + 1
+    return selected[nextIdx]
 end
 
 local findAnyCaveChest = function(startCave)
@@ -1067,7 +1217,7 @@ local findAnyCaveChest = function(startCave)
     return nil, nil, nil
 end
 
-local updateCaveButtonsUI = function() end
+updateCaveButtonsUI = function() end
 
 --========================================================================
 -- GIAO DIỆN NGƯỜI DÙNG (UI)
@@ -1597,15 +1747,17 @@ CaveLabel.TextXAlignment = Enum.TextXAlignment.Left
 CaveLabel.Parent = CaveSelectorFrame
 
 local caveButtons = {}
+local btnResetOne = nil
+
 for i = 1, 6 do
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0, 36, 0, 26)
     btn.Position = UDim2.new(0, 80 + (i - 1) * 42, 0.5, -13)
-    btn.BackgroundColor3 = (STATE.SelectedCave == i) and Color3.fromRGB(50, 110, 220) or Color3.fromRGB(35, 40, 55)
+    btn.BackgroundColor3 = Color3.fromRGB(35, 40, 55)
     btn.Text = "H" .. i
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
     btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 11
+    btn.TextSize = 10
     btn.Parent = CaveSelectorFrame
 
     local bCorner = Instance.new("UICorner")
@@ -1613,43 +1765,135 @@ for i = 1, 6 do
     bCorner.Parent = btn
 
     btn.Activated:Connect(function()
-        if STATE.SelectedCave ~= i then
-            STATE.CaveHatchActive = false
+        if not STATE.SelectedCaves or type(STATE.SelectedCaves) ~= "table" then
+            STATE.SelectedCaves = { [STATE.SelectedCave or 1] = true }
         end
-        STATE.SelectedCave = i
-        for idx, b in ipairs(caveButtons) do
-            b.BackgroundColor3 = (idx == i) and Color3.fromRGB(50, 110, 220) or Color3.fromRGB(35, 40, 55)
-        end
-        local eggObj, eggCF, eggId = getCaveEggModel(i)
-        if eggId then
-            STATE.SelectedEggName = eggId
-            lblSelectedEgg.Text = eggId
+        local isCurrentlySelected = (STATE.SelectedCaves[i] == true)
+        if isCurrentlySelected then
+            local count = 0
+            for idx = 1, 6 do
+                if STATE.SelectedCaves[idx] then count = count + 1 end
+            end
+            if count > 1 then
+                STATE.SelectedCaves[i] = false
+                if STATE.SelectedCave == i then
+                    local remList = getSelectedCavesList()
+                    STATE.SelectedCave = remList[1] or 1
+                end
+            else
+                pcall(function()
+                    StarterGui:SetCore("SendNotification", {
+                        Title = "⚠️ Lưu Ý",
+                        Text = "Cần giữ ít nhất 1 hang được chọn!",
+                        Duration = 2
+                    })
+                end)
+            end
         else
-            STATE.SelectedEggName = ""
-            lblSelectedEgg.Text = "Hang " .. i .. " (Tự quét khi vào)"
+            STATE.SelectedCaves[i] = true
+            STATE.SelectedCave = i
         end
-        if eggCF then
-            STATE.CaveCFrames[i] = eggCF
-        else
-            local chestObj, chestCF = getCaveChest(i)
-            if chestCF then STATE.CaveCFrames[i] = chestCF end
-        end
-        local countdownStr = getCaveOpenCountdown(i)
-        lblCaveTimer.Text = countdownStr
-        if lblCaveTimerTrails then lblCaveTimerTrails.Text = countdownStr end
+        if updateCaveButtonsUI then updateCaveButtonsUI() end
         saveConfig()
     end)
     table.insert(caveButtons, btn)
 end
 
-updateCaveButtonsUI = function(newCave)
-    newCave = tonumber(newCave) or STATE.SelectedCave
+lblSelectedCaves = createInfoCard(TrailsPage, "⛰️ Danh Sách Mở Lần Lượt:", formatSelectedCavesText())
+
+local QuickSelectFrame = Instance.new("Frame")
+QuickSelectFrame.Size = UDim2.new(1, 0, 0, 30)
+QuickSelectFrame.BackgroundTransparency = 1
+QuickSelectFrame.Parent = TrailsPage
+
+local btnSelectAll = Instance.new("TextButton")
+btnSelectAll.Size = UDim2.new(0.485, 0, 1, 0)
+btnSelectAll.Position = UDim2.new(0, 0, 0, 0)
+btnSelectAll.BackgroundColor3 = Color3.fromRGB(40, 100, 180)
+btnSelectAll.Text = "⭐ Chọn Toàn Bộ H1 - H6"
+btnSelectAll.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnSelectAll.Font = Enum.Font.GothamBold
+btnSelectAll.TextSize = 10
+btnSelectAll.Parent = QuickSelectFrame
+local c1 = Instance.new("UICorner") c1.CornerRadius = UDim.new(0, 6) c1.Parent = btnSelectAll
+
+btnResetOne = Instance.new("TextButton")
+btnResetOne.Size = UDim2.new(0.485, 0, 1, 0)
+btnResetOne.Position = UDim2.new(0.515, 0, 0, 0)
+btnResetOne.BackgroundColor3 = Color3.fromRGB(60, 65, 80)
+btnResetOne.Text = "🎯 Chỉ Chọn Hang " .. tostring(STATE.SelectedCave)
+btnResetOne.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnResetOne.Font = Enum.Font.GothamBold
+btnResetOne.TextSize = 10
+btnResetOne.Parent = QuickSelectFrame
+local c2 = Instance.new("UICorner") c2.CornerRadius = UDim.new(0, 6) c2.Parent = btnResetOne
+
+btnSelectAll.Activated:Connect(function()
+    for idx = 1, 6 do
+        STATE.SelectedCaves[idx] = true
+    end
+    if updateCaveButtonsUI then updateCaveButtonsUI() end
+    saveConfig()
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "⭐ Đã Chọn Toàn Bộ",
+            Text = "Bot sẽ mở lần lượt từ Hang 1 đến Hang 6!",
+            Duration = 2.5
+        })
+    end)
+end)
+
+btnResetOne.Activated:Connect(function()
+    local cur = STATE.SelectedCave or 1
+    for idx = 1, 6 do
+        STATE.SelectedCaves[idx] = (idx == cur)
+    end
+    if updateCaveButtonsUI then updateCaveButtonsUI() end
+    saveConfig()
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "🎯 Đã Chọn 1 Hang",
+            Text = "Chỉ mở duy nhất Hang " .. cur .. "!",
+            Duration = 2.5
+        })
+    end)
+end)
+
+updateCaveButtonsUI = function()
     if caveButtons and #caveButtons == 6 then
         for idx, b in ipairs(caveButtons) do
-            b.BackgroundColor3 = (idx == newCave) and Color3.fromRGB(50, 110, 220) or Color3.fromRGB(35, 40, 55)
+            local isSelected = STATE.SelectedCaves and STATE.SelectedCaves[idx]
+            local isCurrent = (STATE.SelectedCave == idx)
+            if isCurrent then
+                b.BackgroundColor3 = Color3.fromRGB(0, 160, 255)
+                b.Text = "★H" .. idx
+            elseif isSelected then
+                b.BackgroundColor3 = Color3.fromRGB(45, 90, 180)
+                b.Text = "✓H" .. idx
+            else
+                b.BackgroundColor3 = Color3.fromRGB(35, 40, 55)
+                b.Text = "H" .. idx
+            end
         end
     end
+    if lblSelectedCaves then
+        lblSelectedCaves.Text = formatSelectedCavesText()
+    end
+    if btnResetOne then
+        btnResetOne.Text = "🎯 Chỉ Chọn Hang " .. tostring(STATE.SelectedCave)
+    end
+    local _, _, eggId = getCaveEggModel(STATE.SelectedCave)
+    if eggId then
+        STATE.SelectedEggName = eggId
+        if lblSelectedEgg then lblSelectedEgg.Text = "Hang " .. STATE.SelectedCave .. ": " .. eggId end
+    else
+        if lblSelectedEgg then lblSelectedEgg.Text = "Hang " .. STATE.SelectedCave .. " (Tự quét khi vào)" end
+    end
+    local countdownStr = getCaveOpenCountdown(STATE.SelectedCave)
+    if lblCaveTimer then lblCaveTimer.Text = countdownStr end
+    if lblCaveTimerTrails then lblCaveTimerTrails.Text = countdownStr end
 end
+updateCaveButtonsUI()
 
 createActionButton(TrailsPage, "📍 Lưu Vị Trí Hang Đang Đứng Cho Hang Đã Chọn", Color3.fromRGB(40, 140, 90), function()
     local char = Player.Character
@@ -1708,19 +1952,19 @@ createToggle(TrailsPage, "🔥 Mở Trứng Tối Đa (Max " .. getMaxHatchAmoun
     STATE.AutoMaxHatch = v
     saveConfig()
 end)
-createActionButton(TrailsPage, "🔄 Đặt Lại Chu Kỳ Mở Trứng Hang (Đang Chọn)", Color3.fromRGB(160, 90, 40), function()
-    if STATE.CaveHatchedForThisCycle then
-        STATE.CaveHatchedForThisCycle[STATE.SelectedCave] = false
+createActionButton(TrailsPage, "🔄 Đặt Lại Chu Kỳ Toàn Bộ Hang Đang Chọn", Color3.fromRGB(160, 90, 40), function()
+    for idx = 1, 6 do
+        STATE.CaveHatchedForThisCycle[idx] = false
     end
     STATE.CaveHatchActive = false
     pcall(function()
         StarterGui:SetCore("SendNotification", {
             Title = "🔄 Đặt Lại Chu Kỳ",
-            Text = "Đã đặt lại chu kỳ mở trứng Hang " .. STATE.SelectedCave .. "! Sẵn sàng mở tiếp.",
-            Duration = 2.5
+            Text = "Đã đặt lại chu kỳ cho toàn bộ các Hang (" .. formatSelectedCavesText() .. ")!",
+            Duration = 3
         })
     end)
-    logActivity("MỞ_TRỨNG", "Người dùng đã thủ công đặt lại chu kỳ mở trứng Hang " .. STATE.SelectedCave .. ".")
+    logActivity("MỞ_TRỨNG", "Người dùng đã thủ công đặt lại chu kỳ mở trứng cho các Hang (" .. formatSelectedCavesText() .. ").")
 end)
 createToggle(TrailsPage, "🎁 Hiện Pop-up Kết Quả (Tự đóng sau 1.2s)", STATE.ShowHatchPopup, function(v) STATE.ShowHatchPopup = v end)
 createToggle(TrailsPage, "⏩ Bỏ Qua Cắt Cảnh (Skip Cutscene Animation)", STATE.SkipAnimation, function(v)
@@ -2175,6 +2419,10 @@ task.spawn(function()
                                 safeTeleport(STATE.CaveHatchEggCF)
                                 STATE.CurrentAction = "🚀 Quay lại tiếp tục mở trứng Hang " .. STATE.CaveHatchCaveNum
                             elseif STATE.AutoCaveChests or STATE.AutoHatch then
+                                if getBestActiveCave then
+                                    local bestCave = getBestActiveCave()
+                                    if bestCave then STATE.SelectedCave = bestCave end
+                                end
                                 local cObj, cCF = getCaveChest(STATE.SelectedCave)
                                 if cObj and cCF and STATE.AutoCaveChests then
                                     safeTeleport(cCF)
@@ -2186,7 +2434,8 @@ task.spawn(function()
                                         STATE.CurrentAction = "🚀 Quay lại Hang " .. STATE.SelectedCave
                                     elseif STATE.FarmCFrame then
                                         safeTeleport(STATE.FarmCFrame)
-                                        STATE.CurrentAction = "⏳ Hang " .. STATE.SelectedCave .. " chưa mở / đang cooldown. Về bãi farm tiền..."
+                                        local cavesStr = formatSelectedCavesText and formatSelectedCavesText() or ("Hang " .. STATE.SelectedCave)
+                                        STATE.CurrentAction = "⏳ Các Hang (" .. cavesStr .. ") chưa mở / đang cooldown. Về bãi farm tiền..."
                                     end
                                 end
                             elseif STATE.AutoFarmMoney then
@@ -2629,13 +2878,14 @@ task.spawn(function()
                 safeTeleport(yetiPos + Vector3.new(0, 2, 6))
             end
         elseif STATE.AutoFarmMoney and hrp then
-            STATE.CurrentAction = "⏳ Chờ Hang " .. targetCave .. " hồi chiêu... Đang cày tiền bãi farm"
+            local cavesStr = formatSelectedCavesText and formatSelectedCavesText() or ("Hang " .. tostring(targetCave))
+            STATE.CurrentAction = "⏳ Chờ các Hang (" .. cavesStr .. ") hồi chiêu... Đang cày tiền bãi farm"
             if STATE.FarmCFrame then
                 local dist = (STATE.FarmCFrame.Position - hrp.Position).Magnitude
                 -- Chỉ teleport khi nhân vật cách xa bãi farm hơn 90 studs (từ trong hang ra bãi)
                 if dist > 90 then
                     if os.time() - lastFarmLogTime > 60 then
-                        logActivity("BÃI_FARM", "Hang " .. targetCave .. " đang hồi chiêu. Dịch chuyển về bãi farm cày tiền.")
+                        logActivity("BÃI_FARM", "Các Hang (" .. cavesStr .. ") đang hồi chiêu. Dịch chuyển về bãi farm cày tiền.")
                         lastFarmLogTime = os.time()
                     end
                     safeTeleport(STATE.FarmCFrame)
@@ -2644,7 +2894,8 @@ task.spawn(function()
             end
             farmBreakablesAtMoneyArea(hrp)
         else
-            STATE.CurrentAction = "⏳ Chờ Hang " .. targetCave .. " hồi chiêu / rương mới..."
+            local cavesStr = formatSelectedCavesText and formatSelectedCavesText() or ("Hang " .. tostring(targetCave))
+            STATE.CurrentAction = "⏳ Chờ các Hang (" .. cavesStr .. ") hồi chiêu / rương mới..."
         end
     end
 
@@ -2682,12 +2933,23 @@ task.spawn(function()
 
                     if timeLeft <= 0 then
                         -- KẾT THÚC PHIÊN MỞ TRỨNG (MỞ ĐỦ 5 PHÚT)
+                        local finishedCave = STATE.CaveHatchCaveNum
                         STATE.CaveHatchActive = false
                         if STATE.CaveHatchedForThisCycle then
-                            STATE.CaveHatchedForThisCycle[STATE.CaveHatchCaveNum] = true
+                            STATE.CaveHatchedForThisCycle[finishedCave] = true
                         end
-                        STATE.CurrentAction = "⏰ Kết thúc phiên mở trứng Hang " .. STATE.CaveHatchCaveNum .. "!"
-                        logActivity("MỞ_TRỨNG", "Kết thúc phiên mở trứng Hang " .. STATE.CaveHatchCaveNum .. ". Chu kỳ đã hoàn tất, quay về bãi farm chờ rương/hồi chiêu.")
+                        STATE.CurrentAction = "⏰ Kết thúc phiên mở trứng Hang " .. finishedCave .. "!"
+                        logActivity("MỞ_TRỨNG", "Kết thúc phiên mở trứng Hang " .. finishedCave .. ". Chu kỳ đã hoàn tất.")
+
+                        -- Tự động chuyển sang hang kế tiếp trong danh sách các hang đã chọn (nếu có chọn nhiều hang)
+                        local nextCave = pickNextCaveAfterHatch(finishedCave)
+                        if nextCave and nextCave ~= finishedCave then
+                            STATE.SelectedCave = nextCave
+                            if updateCaveButtonsUI then updateCaveButtonsUI() end
+                            logActivity("MỞ_TRỨNG", "Chuyển tiếp mục tiêu sang Hang " .. nextCave .. " (" .. formatSelectedCavesText() .. ")")
+                        else
+                            logActivity("MỞ_TRỨNG", "Quay về bãi farm chờ rương/hồi chiêu (" .. formatSelectedCavesText() .. ").")
+                        end
 
                         -- Kiểm tra ngay nếu Yeti đang sống thì bay lên hạ gục Yeti
                         local yetiObj, yetiPos = checkYetiBoss()
@@ -2697,8 +2959,13 @@ task.spawn(function()
                             STATE.CurrentAction = "⚔️ Hết giờ mở trứng -> Lập tức bay lên tiêu diệt Yeti Boss!"
                             safeTeleport(yetiPos + Vector3.new(0, 2, 6))
                         elseif STATE.AutoFarmMoney and STATE.FarmCFrame then
-                            safeTeleport(STATE.FarmCFrame)
-                            task.wait(0.4)
+                            -- Nếu hang kế tiếp chưa có rương hay trứng ngay lập tức, về bãi farm
+                            local nextChest = getCaveChest(STATE.SelectedCave)
+                            local nextEgg = getCaveEgg(STATE.SelectedCave)
+                            if not nextChest and not nextEgg then
+                                safeTeleport(STATE.FarmCFrame)
+                                task.wait(0.4)
+                            end
                         end
                     else
                         -- ĐANG TRONG PHIÊN MỞ TRỨNG: ĐỨNG CẠNH TRỨNG (cách 3.5 studs, không trèo lên bệ)
@@ -2743,6 +3010,20 @@ task.spawn(function()
                 -- GIAI ĐOẠN 2: ĐIỀU PHỐI HANG ĐÃ CHỌN (RƯƠNG -> TRỨNG -> CHỜ COOLDOWN)
                 -- ========================================================
                 elseif (STATE.AutoCaveChests or STATE.AutoHatch) and hrp then
+                    -- Nếu không đang tấn công dở rương, kiểm tra nếu hang hiện tại không có rương và không có trứng mở được thì chuyển sang hang tốt nhất
+                    if not STATE.IsAttackingCaveChest then
+                        local curChest = getCaveChest(targetCave)
+                        local curEgg = (STATE.AutoHatch and not (STATE.CaveHatchedForThisCycle and STATE.CaveHatchedForThisCycle[targetCave])) and getCaveEgg(targetCave) or nil
+                        if not curChest and not curEgg then
+                            local bestCave, actionType = getBestActiveCave()
+                            if bestCave and bestCave ~= targetCave and (actionType == "chest" or actionType == "egg") then
+                                STATE.SelectedCave = bestCave
+                                targetCave = bestCave
+                                if updateCaveButtonsUI then updateCaveButtonsUI() end
+                            end
+                        end
+                    end
+
                     local chestObj, chestCF = getCaveChest(targetCave)
 
                     -- TRƯỜNG HỢP 2A: PHÁT HIỆN RƯƠNG BOSS TRONG HANG
@@ -2839,12 +3120,36 @@ task.spawn(function()
                             STATE.CurrentAction = "🎉 Rương đã vỡ! Bắt đầu mở trứng " .. eggId .. " Hang " .. targetCave
                         else
                             -- Hang chưa có trứng mở được (hoặc đã mở xong chu kỳ này / đang cooldown)
-                            handleCaveCooldown(targetCave, hrp)
+                            -- Kiểm tra xem có hang nào khác trong danh sách đang sẵn sàng không
+                            local nextCandidate = pickNextCaveAfterHatch(targetCave)
+                            if nextCandidate and nextCandidate ~= targetCave then
+                                local cChest = getCaveChest(nextCandidate)
+                                local cEgg = getCaveEgg(nextCandidate)
+                                if cChest or cEgg then
+                                    STATE.SelectedCave = nextCandidate
+                                    if updateCaveButtonsUI then updateCaveButtonsUI() end
+                                else
+                                    handleCaveCooldown(targetCave, hrp)
+                                end
+                            else
+                                handleCaveCooldown(targetCave, hrp)
+                            end
                         end
 
-                    -- TRƯỜNG HỢP 2D: KHÔNG CÒN RƯƠNG VÀ KHÔNG BẬT MỞ TRỨNG -> COOLDOWN VỀ BÃI FARM
+                    -- TRƯỜNG HỢP 2D: KHÔNG CÒN RƯƠNG VÀ KHÔNG BẬT MỞ TRỨNG -> COOLDOWN HOẶC SANG HANG TIẾP THEO
                     else
-                        handleCaveCooldown(targetCave, hrp)
+                        local nextCandidate = pickNextCaveAfterHatch(targetCave)
+                        if nextCandidate and nextCandidate ~= targetCave then
+                            local cChest = getCaveChest(nextCandidate)
+                            if cChest then
+                                STATE.SelectedCave = nextCandidate
+                                if updateCaveButtonsUI then updateCaveButtonsUI() end
+                            else
+                                handleCaveCooldown(targetCave, hrp)
+                            end
+                        else
+                            handleCaveCooldown(targetCave, hrp)
+                        end
                     end
 
                 -- ========================================================
@@ -3032,7 +3337,7 @@ task.spawn(function()
                 "🟢 **Script đã khởi động và hoạt động thành công!**\n\n" ..
                 "👤 **Tài khoản:** `%s`\n" ..
                 "📍 **Vị trí hiện tại:** `%s`\n" ..
-                "⛰️ **Hang mục tiêu:** `Hang %s`\n" ..
+                "⛰️ **Hang mục tiêu:** `%s`\n" ..
                 "👹 **Auto Săn Yeti:** `%s`\n" ..
                 "📦 **Auto Phá Rương Hang:** `%s`\n" ..
                 "🥚 **Auto Mở Trứng Hang:** `%s`\n" ..
@@ -3040,7 +3345,7 @@ task.spawn(function()
                 "🛡️ **Anti-AFK 20m:** `%s`",
                 Player.Name,
                 posStr,
-                tostring(STATE.SelectedCave),
+                formatSelectedCavesText and formatSelectedCavesText() or ("Hang " .. tostring(STATE.SelectedCave)),
                 STATE.AutoYeti and "🟢 BẬT" or "🔴 TẮT",
                 STATE.AutoCaveChests and "🟢 BẬT" or "🔴 TẮT",
                 STATE.AutoHatch and "🟢 BẬT" or "🔴 TẮT",
