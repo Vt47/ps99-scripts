@@ -4,12 +4,80 @@
 -- nhận diện "The Shiny Yeti / Team up to beat it", không click nút Send Pets.
 --========================================================================
 
--- 1. DIỆT SẠCH PHIÊN BẢN CŨ TRONG BỘ NHỚ KHI EXCUTE LẠI
+-- 1. DIỆT SẠCH TOÀN BỘ PHIÊN BẢN CŨ TRONG BỘ NHỚ KHI EXECUTE LẠI (CLEAN TEARDOWN)
+pcall(function()
+    if _G.PS99_SUMMIT_CLEANUP and type(_G.PS99_SUMMIT_CLEANUP) == "function" then
+        _G.PS99_SUMMIT_CLEANUP()
+    end
+end)
+
+_G.PS99_SUMMIT_RUNNING = false
+_G.PS99_SUMMIT_SESSION = 0
+
+-- Dọn dẹp giao diện GUI cũ ngay từ dòng đầu tiên
+pcall(function()
+    local containers = {}
+    if typeof(gethui) == "function" then table.insert(containers, gethui()) end
+    local cg = game:GetService("CoreGui")
+    if cg then table.insert(containers, cg) end
+    local p = game:GetService("Players").LocalPlayer
+    if p and p:FindFirstChild("PlayerGui") then table.insert(containers, p.PlayerGui) end
+
+    for _, c in ipairs(containers) do
+        for _, child in pairs(c:GetChildren()) do
+            if child.Name == "PS99_Summit_Suite" or string.find(string.lower(child.Name), "ps99_summit") then
+                child:Destroy()
+            end
+        end
+    end
+end)
+
+-- Chờ một thoáng để toàn bộ vòng lặp cũ nhận diện session 0 và tự hủy hoàn toàn
+task.wait(0.25)
+
 local CURRENT_SESSION_ID = tick()
 _G.PS99_SUMMIT_SESSION = CURRENT_SESSION_ID
-_G.PS99_SUMMIT_RUNNING = false
-task.wait(0.3)
 _G.PS99_SUMMIT_RUNNING = true
+
+-- Quản lý tất cả Event Connections để ngắt sạch khi execute lại
+local Connections = {}
+local function registerConn(conn)
+    if conn then table.insert(Connections, conn) end
+    return conn
+end
+
+_G.PS99_SUMMIT_CLEANUP = function()
+    _G.PS99_SUMMIT_RUNNING = false
+    _G.PS99_SUMMIT_SESSION = 0
+
+    -- Ngắt toàn bộ Event Connections (UserInput, ScriptContext, Idled, ErrorMessage...)
+    for _, conn in ipairs(Connections) do
+        pcall(function()
+            if conn and conn.Connected then
+                conn:Disconnect()
+            end
+        end)
+    end
+    table.clear(Connections)
+
+    -- Xóa sạch mọi Giao diện GUI cũ của script trên màn hình
+    pcall(function()
+        local containers = {}
+        if typeof(gethui) == "function" then table.insert(containers, gethui()) end
+        local cg = game:GetService("CoreGui")
+        if cg then table.insert(containers, cg) end
+        local p = game:GetService("Players").LocalPlayer
+        if p and p:FindFirstChild("PlayerGui") then table.insert(containers, p.PlayerGui) end
+
+        for _, c in ipairs(containers) do
+            for _, child in pairs(c:GetChildren()) do
+                if child.Name == "PS99_Summit_Suite" or string.find(string.lower(child.Name), "ps99_summit") then
+                    child:Destroy()
+                end
+            end
+        end
+    end)
+end
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -528,11 +596,11 @@ end
 -- Tự động lắng nghe và ghi lại bất kỳ lỗi Script / Engine nào
 pcall(function()
     local ScriptContext = game:GetService("ScriptContext")
-    ScriptContext.Error:Connect(function(msg, stack, scriptInstance)
+    registerConn(ScriptContext.Error:Connect(function(msg, stack, scriptInstance)
         if _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID then
             logActivity("LỖI_HỆ_THỐNG", tostring(msg) .. " | " .. tostring(stack))
         end
-    end)
+    end))
 end)
 
 --========================================================================
@@ -1514,12 +1582,12 @@ ToggleButton.InputBegan:Connect(function(input)
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
+registerConn(UserInputService.InputChanged:Connect(function(input)
     if isDraggingBtn and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStartBtn
         ToggleButton.Position = UDim2.new(startPosBtn.X.Scale, startPosBtn.X.Offset + delta.X, startPosBtn.Y.Scale, startPosBtn.Y.Offset + delta.Y)
     end
-end)
+end))
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
@@ -1556,12 +1624,12 @@ MainFrame.InputBegan:Connect(function(input)
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
+registerConn(UserInputService.InputChanged:Connect(function(input)
     if isDraggingMain and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStartMain
         MainFrame.Position = UDim2.new(startPosMain.X.Scale, startPosMain.X.Offset + delta.X, startPosMain.Y.Scale, startPosMain.Y.Offset + delta.Y)
     end
-end)
+end))
 
 local function toggleGui() MainFrame.Visible = not MainFrame.Visible end
 ToggleButton.Activated:Connect(toggleGui)
@@ -2523,9 +2591,9 @@ createActionButton(SettingsPage, "📋 Quét & Gửi Log Debug Về Discord", Co
 end)
 
 pcall(function()
-    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    registerConn(UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then toggleGui() end
-    end)
+    end))
 end)
 
 --========================================================================
@@ -3622,8 +3690,8 @@ task.spawn(function()
 
     -- Lớp 1: Bắt sự kiện Idled dự phòng nếu getconnections chưa tắt kịp
     pcall(function()
-        Player.Idled:Connect(function()
-            if STATE.AntiAFK and _G.PS99_SUMMIT_RUNNING then
+        registerConn(Player.Idled:Connect(function()
+            if STATE.AntiAFK and _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID then
                 disableIdledConnections()
                 if VIM then
                     pcall(function()
@@ -3639,7 +3707,7 @@ task.spawn(function()
                     end)
                 end
             end
-        end)
+        end))
     end)
 
     -- Lớp 2: Chủ động phát tín hiệu hoạt động định kỳ mỗi 45s (Active Heartbeat)
@@ -3686,11 +3754,13 @@ task.spawn(function()
     end
 
     pcall(function()
-        GuiService.ErrorMessageChanged:Connect(function()
-            if GuiService:GetErrorCode().Value > 0 then
-                triggerReconnect("Mã lỗi mạng: " .. tostring(GuiService:GetErrorCode().Value))
+        registerConn(GuiService.ErrorMessageChanged:Connect(function()
+            if _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID then
+                if GuiService:GetErrorCode().Value > 0 then
+                    triggerReconnect("Mã lỗi mạng: " .. tostring(GuiService:GetErrorCode().Value))
+                end
             end
-        end)
+        end))
     end)
 
     task.spawn(function()
@@ -3743,6 +3813,7 @@ task.spawn(function()
     -- GỬI THÔNG BÁO WEBHOOK KHI EXECUTE THÀNH CÔNG
     task.spawn(function()
         task.wait(1.5)
+        if not (_G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID) then return end
         if STATE.ExecuteAlert then
             local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
             local posStr = hrp and string.format("Vector3.new(%.1f, %.1f, %.1f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z) or "Chưa xác định"
