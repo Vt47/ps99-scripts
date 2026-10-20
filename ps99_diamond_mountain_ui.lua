@@ -99,6 +99,7 @@ ScreenGui.Parent = GuiParent
 --========================================================================
 
 local STATE = {
+    IsPaused = false,
     -- [YETI BOSS]
     AutoYeti = true,
     AutoClickYeti = true,
@@ -1347,7 +1348,7 @@ CloseBtn.Activated:Connect(function() MainFrame.Visible = false end)
 
 -- Sidebar
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 125, 1, -42)
+Sidebar.Size = UDim2.new(0, 130, 1, -42)
 Sidebar.Position = UDim2.new(0, 0, 0, 42)
 Sidebar.BackgroundColor3 = Color3.fromRGB(20, 22, 32)
 Sidebar.BorderSizePixel = 0
@@ -1356,6 +1357,7 @@ Sidebar.Parent = MainFrame
 local SidebarLayout = Instance.new("UIListLayout")
 SidebarLayout.Padding = UDim.new(0, 4)
 SidebarLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+SidebarLayout.SortOrder = Enum.SortOrder.LayoutOrder
 SidebarLayout.Parent = Sidebar
 
 local SidebarPad = Instance.new("UIPadding")
@@ -1363,8 +1365,8 @@ SidebarPad.PaddingTop = UDim.new(0, 8)
 SidebarPad.Parent = Sidebar
 
 local ContentContainer = Instance.new("Frame")
-ContentContainer.Size = UDim2.new(1, -135, 1, -50)
-ContentContainer.Position = UDim2.new(0, 130, 0, 46)
+ContentContainer.Size = UDim2.new(1, -140, 1, -50)
+ContentContainer.Position = UDim2.new(0, 135, 0, 46)
 ContentContainer.BackgroundTransparency = 1
 ContentContainer.Parent = MainFrame
 
@@ -1400,7 +1402,84 @@ local FarmPage = createPage("Farm")
 local LogsPage = createPage("Logs")
 local SettingsPage = createPage("Settings")
 
+-- HÀNG NÚT ĐIỀU KHIỂN NHANH TRÊN ĐẦU SIDEBAR (RECONNECT + DỪNG TẤT CẢ)
+local TopControlFrame = Instance.new("Frame")
+TopControlFrame.Name = "ATopControlFrame"
+TopControlFrame.Size = UDim2.new(1, -10, 0, 34)
+TopControlFrame.BackgroundTransparency = 1
+TopControlFrame.LayoutOrder = 1
+TopControlFrame.Parent = Sidebar
+
+local btnSidebarReconnect = Instance.new("TextButton")
+btnSidebarReconnect.Name = "BtnSidebarReconnect"
+btnSidebarReconnect.Size = UDim2.new(0.485, 0, 1, 0)
+btnSidebarReconnect.Position = UDim2.new(0, 0, 0, 0)
+btnSidebarReconnect.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+btnSidebarReconnect.Text = "🔄 Reconnect"
+btnSidebarReconnect.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnSidebarReconnect.Font = Enum.Font.GothamBold
+btnSidebarReconnect.TextSize = 9
+btnSidebarReconnect.Parent = TopControlFrame
+
+local btnReconCorner = Instance.new("UICorner")
+btnReconCorner.CornerRadius = UDim.new(0, 8)
+btnReconCorner.Parent = btnSidebarReconnect
+
+btnSidebarReconnect.Activated:Connect(function()
+    TeleportService:Teleport(game.PlaceId, Player)
+end)
+
+local btnStopAll = Instance.new("TextButton")
+btnStopAll.Name = "BtnStopAll"
+btnStopAll.Size = UDim2.new(0.485, 0, 1, 0)
+btnStopAll.Position = UDim2.new(0.515, 0, 0, 0)
+btnStopAll.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+btnStopAll.Text = "🛑 Dừng Lại"
+btnStopAll.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnStopAll.Font = Enum.Font.GothamBold
+btnStopAll.TextSize = 9
+btnStopAll.Parent = TopControlFrame
+
+local btnStopCorner = Instance.new("UICorner")
+btnStopCorner.CornerRadius = UDim.new(0, 8)
+btnStopCorner.Parent = btnStopAll
+
+btnStopAll.Activated:Connect(function()
+    STATE.IsPaused = not STATE.IsPaused
+    if STATE.IsPaused then
+        STATE.IsFightingYeti = false
+        STATE.CurrentYetiObj = nil
+        STATE.IsAttackingCaveChest = false
+        STATE.CurrentChestUID = nil
+        STATE.CaveHatchActive = false
+        STATE.CurrentAction = "🛑 ĐÃ DỪNG TOÀN BỘ HOẠT ĐỘNG (PAUSED)"
+        btnStopAll.BackgroundColor3 = Color3.fromRGB(40, 160, 80)
+        btnStopAll.Text = "▶️ Tiếp Tục"
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "🛑 Tạm Dừng Toàn Bộ",
+                Text = "Đã dừng mọi hoạt động farm, nhân vật đứng yên!",
+                Duration = 2.5
+            })
+        end)
+        logActivity("HỆ_THỐNG", "Người dùng đã bấm DỪNG TOÀN BỘ hoạt động.")
+    else
+        STATE.CurrentAction = "🚀 Đang tiếp tục hoạt động..."
+        btnStopAll.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+        btnStopAll.Text = "🛑 Dừng Lại"
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "▶️ Tiếp Tục Hoạt Động",
+                Text = "Bot đã tiếp tục tự động farm!",
+                Duration = 2.5
+            })
+        end)
+        logActivity("HỆ_THỐNG", "Người dùng đã bấm TIẾP TỤC hoạt động.")
+    end
+end)
+
 local TabButtons = {}
+local tabOrderCounter = 2
 local function addTabButton(text, pageName)
     local TabBtn = Instance.new("TextButton")
     TabBtn.Size = UDim2.new(1, -10, 0, 34)
@@ -1409,7 +1488,9 @@ local function addTabButton(text, pageName)
     TabBtn.TextColor3 = Color3.fromRGB(180, 190, 210)
     TabBtn.Font = Enum.Font.GothamMedium
     TabBtn.TextSize = 11
+    TabBtn.LayoutOrder = tabOrderCounter
     TabBtn.Parent = Sidebar
+    tabOrderCounter = tabOrderCounter + 1
 
     local Corner = Instance.new("UICorner")
     Corner.CornerRadius = UDim.new(0, 8)
@@ -1440,24 +1521,6 @@ addTabButton("⛰️ Hang & Trứng", "Trails")
 addTabButton("💰 Bãi Farm Tiền", "Farm")
 addTabButton("📜 Nhật Ký", "Logs")
 addTabButton("⚙️ Cài Đặt AFK", "Settings")
-
-local btnSidebarReconnect = Instance.new("TextButton")
-btnSidebarReconnect.Name = "BtnSidebarReconnect"
-btnSidebarReconnect.Size = UDim2.new(1, -10, 0, 34)
-btnSidebarReconnect.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-btnSidebarReconnect.Text = "🔄 Reconnect Server"
-btnSidebarReconnect.TextColor3 = Color3.fromRGB(255, 255, 255)
-btnSidebarReconnect.Font = Enum.Font.GothamBold
-btnSidebarReconnect.TextSize = 10
-btnSidebarReconnect.Parent = Sidebar
-
-local btnReconCorner = Instance.new("UICorner")
-btnReconCorner.CornerRadius = UDim.new(0, 8)
-btnReconCorner.Parent = btnSidebarReconnect
-
-btnSidebarReconnect.Activated:Connect(function()
-    TeleportService:Teleport(game.PlaceId, Player)
-end)
 
 btnDash.BackgroundColor3 = Color3.fromRGB(50, 110, 220)
 btnDash.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -2366,7 +2429,7 @@ task.spawn(function()
     task.spawn(function()
         while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(0.4)
-            if STATE.AutoYeti then
+            if not STATE.IsPaused and STATE.AutoYeti then
                 local yetiObj, yetiPos, cdTimer = checkYetiBoss()
 
                 if yetiObj and yetiPos then
@@ -2909,8 +2972,11 @@ task.spawn(function()
             local char = Player.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
+            -- Nếu đang tạm dừng toàn bộ: đứng yên tuyệt đối, không di chuyển/tấn công
+            if STATE.IsPaused then
+                STATE.CurrentAction = "🛑 ĐÃ DỪNG TOÀN BỘ HOẠT ĐỘNG (PAUSED)"
             -- Nếu đang trong trận đánh Yeti: coordinator nhường quyền
-            if not STATE.IsFightingYeti and hrp then
+            elseif not STATE.IsFightingYeti and hrp then
                 local targetCave = STATE.SelectedCave
 
                 -- ========================================================
@@ -3306,7 +3372,11 @@ task.spawn(function()
         while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(1)
             pcall(function()
-                lblAction.Text = STATE.CurrentAction
+                if STATE.IsPaused then
+                    lblAction.Text = "🛑 ĐÃ DỪNG TOÀN BỘ HOẠT ĐỘNG (PAUSED)"
+                else
+                    lblAction.Text = STATE.CurrentAction
+                end
                 local caveCountdownStr = getCaveOpenCountdown(STATE.SelectedCave)
                 lblCaveTimer.Text = caveCountdownStr
                 if lblCaveTimerTrails then
