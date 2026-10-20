@@ -33,6 +33,7 @@ local Library, Client, Directory, Save, PetDirectory, Network, EggCmds
 local lblAction, lblCaveTimer, lblYetiStatus, lblYetiCount, lblHatchedEggs, lblDiamonds, lblDiffDiamonds, lblUptime, lblPets, lblSelectedCaves
 local formatNumber, formatDuration, getDiamonds, getPetCategory, getPetVariantText, triggerRarePetAlert
 local getSelectedCavesList, formatSelectedCavesText, getBestActiveCave, pickNextCaveAfterHatch, updateCaveButtonsUI
+local getTravelingMerchant, handleTravelingMerchantPurchase, manualBuyTravelingMerchant
 pcall(function()
     Library = RS:FindFirstChild("Library") or RS:WaitForChild("Library", 5)
     if Library then
@@ -100,6 +101,10 @@ ScreenGui.Parent = GuiParent
 
 local STATE = {
     IsPaused = false,
+    -- [TRAVELING MERCHANT]
+    AutoTravelingMerchant = true,
+    LastMerchantName = "",
+    LastMerchantTime = 0,
     -- [YETI BOSS]
     AutoYeti = true,
     AutoClickYeti = true,
@@ -568,6 +573,7 @@ local function saveConfig()
             HatchAmount = STATE.HatchAmount,
             AutoFarmMoney = STATE.AutoFarmMoney,
             AutoHitBreakables = STATE.AutoHitBreakables,
+            AutoTravelingMerchant = STATE.AutoTravelingMerchant,
             ShowHatchPopup = STATE.ShowHatchPopup,
             SkipAnimation = STATE.SkipAnimation,
             SelectedEggName = STATE.SelectedEggName,
@@ -634,6 +640,7 @@ local function loadConfig()
         if data.HatchAmount ~= nil then STATE.HatchAmount = tonumber(data.HatchAmount) or STATE.HatchAmount end
         if data.AutoFarmMoney ~= nil then STATE.AutoFarmMoney = data.AutoFarmMoney end
         if data.AutoHitBreakables ~= nil then STATE.AutoHitBreakables = data.AutoHitBreakables end
+        if data.AutoTravelingMerchant ~= nil then STATE.AutoTravelingMerchant = data.AutoTravelingMerchant end
         if data.ShowHatchPopup ~= nil then STATE.ShowHatchPopup = data.ShowHatchPopup end
         if data.SkipAnimation ~= nil then STATE.SkipAnimation = data.SkipAnimation end
         if data.SelectedEggName and data.SelectedEggName ~= "" then STATE.SelectedEggName = data.SelectedEggName end
@@ -1219,6 +1226,165 @@ local findAnyCaveChest = function(startCave)
 end
 
 updateCaveButtonsUI = function() end
+
+--========================================================================
+-- ĐIỀU PHỐI VÀ TỰ ĐỘNG SĂN TRAVELING MERCHANT (CỖ XE THƯƠNG NHÂN DU MỤC)
+--========================================================================
+
+getTravelingMerchant = function()
+    -- 1. Quét trực tiếp dưới Workspace (con trực tiếp)
+    for _, obj in pairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and string.find(string.lower(obj.Name), "travelingmerchant") then
+            local pad = obj:FindFirstChild("Pad")
+            local cf = pad and pad.CFrame or obj:GetPivot()
+            local timerText = ""
+            local sign = obj:FindFirstChild("Sign")
+            if sign then
+                for _, tl in pairs(sign:GetDescendants()) do
+                    if tl:IsA("TextLabel") and tl.Text ~= "" and string.find(string.lower(tl.Text), "leave") then
+                        timerText = tl.Text
+                        break
+                    end
+                end
+            end
+            return obj, cf, obj.Name, pad, timerText
+        end
+    end
+
+    -- 2. Quét sâu trong Workspace nếu xe nằm trong thư mục con (Debris/Map/Things...)
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and string.find(string.lower(obj.Name), "travelingmerchant") then
+            local pad = obj:FindFirstChild("Pad")
+            local cf = pad and pad.CFrame or obj:GetPivot()
+            local timerText = ""
+            local sign = obj:FindFirstChild("Sign")
+            if sign then
+                for _, tl in pairs(sign:GetDescendants()) do
+                    if tl:IsA("TextLabel") and tl.Text ~= "" and string.find(string.lower(tl.Text), "leave") then
+                        timerText = tl.Text
+                        break
+                    end
+                end
+            end
+            return obj, cf, obj.Name, pad, timerText
+        end
+    end
+
+    return nil, nil, nil, nil, nil
+end
+
+handleTravelingMerchantPurchase = function(merchantObj, padCF)
+    local char = Player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp or not merchantObj then return false, "Không tìm thấy nhân vật hoặc cỗ xe!" end
+
+    local prevCF = hrp.CFrame
+    local merchantName = merchantObj.Name
+
+    logActivity("MERCHANT", "Phát hiện " .. merchantName .. "! Tự động dịch chuyển vào bục Pad để mở shop...")
+    STATE.CurrentAction = "🛒 Đang mua sạch shop " .. merchantName .. "..."
+
+    -- 1. Teleport đứng trực tiếp lên bục Pad (hình tròn trước xe)
+    local targetPos = padCF and (padCF + Vector3.new(0, 1.5, 0)) or (merchantObj:GetPivot() + Vector3.new(0, 1.5, 0))
+    safeTeleport(targetPos)
+    task.wait(0.6) -- Chờ game nhận diện người chơi đứng trên Pad để mở shop GUI
+
+    -- 2. Gọi đồng thời Remote mua cho các Slot (1 đến 8)
+    if Network and Network.Invoke then
+        for slot = 1, 8 do
+            pcall(function()
+                Network.Invoke("TravelingMerchant_RequestPurchase", slot)
+            end)
+            pcall(function()
+                Network.Invoke("TravelingMerchant_RequestPurchase", merchantName, slot)
+            end)
+            pcall(function()
+                Network.Invoke("Merchant_RequestPurchase", merchantName, slot)
+            end)
+            task.wait(0.1)
+        end
+    end
+
+    -- 3. Quét PlayerGui để tự động click toàn bộ nút Mua (Buy Buttons) trong GUI shop
+    pcall(function()
+        local pGui = Player:FindFirstChild("PlayerGui")
+        if pGui then
+            for _, g in pairs(pGui:GetChildren()) do
+                if g:IsA("ScreenGui") and g.Enabled then
+                    local gn = string.lower(g.Name)
+                    if string.find(gn, "merchant") or string.find(gn, "travel") or string.find(gn, "shop") or string.find(gn, "event") then
+                        for _, btn in pairs(g:GetDescendants()) do
+                            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                                local t = string.lower(btn.Text or "")
+                                local n = string.lower(btn.Name)
+                                if string.find(t, "buy") or string.find(n, "buy") or string.find(t, "mua") or string.find(n, "purchase") then
+                                    if firesignal then
+                                        firesignal(btn.Activated)
+                                        firesignal(btn.MouseButton1Click)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    task.wait(0.5)
+
+    -- 4. TỰ ĐỘNG ĐÓNG BẢNG SHOP (Click nút X / Close và tắt GUI)
+    pcall(function()
+        local pGui = Player:FindFirstChild("PlayerGui")
+        if pGui then
+            for _, g in pairs(pGui:GetChildren()) do
+                if g:IsA("ScreenGui") and g.Enabled then
+                    local gn = string.lower(g.Name)
+                    if string.find(gn, "merchant") or string.find(gn, "travel") or string.find(gn, "shop") then
+                        for _, btn in pairs(g:GetDescendants()) do
+                            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                                local t = string.lower(btn.Text or "")
+                                local n = string.lower(btn.Name)
+                                if t == "x" or n == "close" or string.find(n, "close") or string.find(n, "exit") or string.find(t, "close") then
+                                    if firesignal then
+                                        firesignal(btn.Activated)
+                                        firesignal(btn.MouseButton1Click)
+                                    end
+                                end
+                            end
+                        end
+                        g.Enabled = false
+                    end
+                end
+            end
+        end
+    end)
+
+    -- 5. Teleport trở lại vị trí cũ ngay lập tức (Rời khỏi Pad, game cũng sẽ tự hủy giao diện shop)
+    safeTeleport(prevCF)
+    task.wait(0.3)
+
+    logActivity("MERCHANT", "Đã mua xong toàn bộ hàng từ " .. merchantName .. " và tự động đóng shop quay về vị trí cũ!")
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "🛒 Traveling Merchant",
+            Text = "Đã mua sạch shop " .. merchantName .. " và tự động đóng bảng shop!",
+            Duration = 4
+        })
+    end)
+
+    return true, "Đã mua sạch shop " .. merchantName .. " thành công!"
+end
+
+manualBuyTravelingMerchant = function()
+    local mObj, mCF, mName, mPad, timerText = getTravelingMerchant()
+    if not mObj then
+        return false, "Hiện không có Traveling Merchant nào xuất hiện trên server!"
+    end
+    STATE.LastMerchantName = mName
+    STATE.LastMerchantTime = os.time()
+    return handleTravelingMerchantPurchase(mObj, mCF)
+end
 
 --========================================================================
 -- GIAO DIỆN NGƯỜI DÙNG (UI)
@@ -2034,6 +2200,20 @@ createToggle(TrailsPage, "⏩ Bỏ Qua Cắt Cảnh (Skip Cutscene Animation)", 
     STATE.SkipAnimation = v
     saveConfig()
     if v and handleEggOpeningVisuals then handleEggOpeningVisuals() end
+end)
+createToggle(TrailsPage, "🛒 Auto Săn Traveling Merchant (TP & Mua Sạch)", STATE.AutoTravelingMerchant, function(v)
+    STATE.AutoTravelingMerchant = v
+    saveConfig()
+end)
+createActionButton(TrailsPage, "⚡ TP & Mua Sạch Traveling Merchant Ngay (Thủ công)", Color3.fromRGB(180, 90, 40), function()
+    local ok, msg = manualBuyTravelingMerchant()
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = ok and "🛒 Traveling Merchant" or "⚠️ Không Tìm Thấy",
+            Text = msg,
+            Duration = 3
+        })
+    end)
 end)
 
 -- TRANG 4: BÃI FARM TIỀN
@@ -3270,6 +3450,30 @@ task.spawn(function()
     end)
 
     -- ========================================================
+    -- AUTO SĂN TRAVELING MERCHANT (TP VÀO BỤC & MUA SẠCH SHOP)
+    -- ========================================================
+    task.spawn(function()
+        while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
+            task.wait(3)
+            if not STATE.IsPaused and STATE.AutoTravelingMerchant then
+                local mObj, mCF, mName, mPad, timerText = getTravelingMerchant()
+                if mObj and mName then
+                    local isNewMerchant = (STATE.LastMerchantName ~= mName) or (os.time() - STATE.LastMerchantTime > 600)
+                    if isNewMerchant then
+                        if not STATE.IsFightingYeti then
+                            STATE.LastMerchantName = mName
+                            STATE.LastMerchantTime = os.time()
+                            pcall(function()
+                                handleTravelingMerchantPurchase(mObj, mCF)
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- ========================================================
     -- BỘ CHỐNG AFK & AUTO RECONNECT 4 LỚP (BULLETPROOF ANTI-AFK ENGINE)
     -- ========================================================
     local VIM
@@ -3412,6 +3616,7 @@ task.spawn(function()
                 "📦 **Auto Phá Rương Hang:** `%s`\n" ..
                 "🥚 **Auto Mở Trứng Hang:** `%s`\n" ..
                 "💰 **Auto Cày Tiền:** `%s`\n" ..
+                "🛒 **Auto Săn Merchant:** `%s`\n" ..
                 "🛡️ **Anti-AFK 20m:** `%s`",
                 Player.Name,
                 posStr,
@@ -3420,6 +3625,7 @@ task.spawn(function()
                 STATE.AutoCaveChests and "🟢 BẬT" or "🔴 TẮT",
                 STATE.AutoHatch and "🟢 BẬT" or "🔴 TẮT",
                 STATE.AutoFarmMoney and "🟢 BẬT" or "🔴 TẮT",
+                STATE.AutoTravelingMerchant and "🟢 BẬT" or "🔴 TẮT",
                 STATE.AntiAFK and "🟢 BẬT" or "🔴 TẮT"
             )
             sendWebhook("🚀 EXECUTE SCRIPT THÀNH CÔNG!", desc, 3066993)
