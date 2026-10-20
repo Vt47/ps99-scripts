@@ -936,43 +936,57 @@ local function getCaveEggModel(caveNum)
     return nil, nil, expectedEggName
 end
 
+-- Kiểm tra xem 1 GuiObject có thực sự hiển thị trên màn hình hay không
+local function isGuiObjectVisible(gui)
+    if not gui or not gui:IsA("GuiObject") then return false end
+    if not gui.Visible then return false end
+
+    local current = gui.Parent
+    local hasLayerCollector = false
+    while current and current ~= workspace and current ~= game do
+        if current:IsA("LayerCollector") then
+            if not current.Enabled then return false end
+            hasLayerCollector = true
+            break
+        elseif current:IsA("GuiObject") then
+            if not current.Visible then return false end
+        end
+        current = current.Parent
+    end
+
+    return hasLayerCollector
+end
+
 -- Kiểm tra xem Trứng có đang mở (không bị khóa bởi TextLabel 'Locked', PriceHUDLocked, hoặc Attribute)
 local function isEggUnlocked(eggObj)
-    if not eggObj or not eggObj.Parent or (not eggObj:IsA("Model") and not eggObj:IsA("BasePart")) then return false end
+    if not eggObj or not eggObj.Parent or not eggObj:IsDescendantOf(workspace) then return false end
 
     local isLocked = false
     pcall(function()
-        -- 1. Kiểm tra Attribute Locked
+        -- 1. Kiểm tra Attribute Locked trên Model trứng
         if eggObj:GetAttribute("Locked") == true or eggObj:GetAttribute("IsLocked") == true then
             isLocked = true
             return
         end
 
-        -- 2. Duyệt qua tất cả descendants của eggObj
+        -- 2. Duyệt qua các đối tượng con của trứng
         for _, desc in pairs(eggObj:GetDescendants()) do
-            local dName = string.lower(desc.Name)
-            if string.find(dName, "pricehudlocked") or string.find(dName, "lockedhud") or string.find(dName, "lockhud") then
+            -- Nếu có GuiObject hoặc LayerCollector chuyên dụng báo Locked đang THỰC SỰ HIỂN THỊ
+            if desc.Name == "PriceHUDLocked" or desc.Name == "LockedHUD" or desc.Name == "LockHUD" then
                 if desc:IsA("LayerCollector") and desc.Enabled then
                     isLocked = true
                     return
-                elseif desc:IsA("GuiObject") and desc.Visible then
+                elseif desc:IsA("GuiObject") and isGuiObjectVisible(desc) then
                     isLocked = true
                     return
                 end
             end
 
-            if desc:IsA("TextLabel") then
-                local txt = string.lower(desc.Text or "")
-                if string.find(txt, "locked") or txt == "lock" then
-                    if desc.Visible then
-                        isLocked = true
-                        return
-                    end
-                    local bg = desc:FindFirstAncestorOfClass("BillboardGui") or desc:FindFirstAncestorOfClass("SurfaceGui")
-                    if bg and bg.Enabled then
-                        isLocked = true
-                        return
-                    end
+            -- Nếu có TextLabel với chữ "Locked" đang THỰC SỰ HIỂN THỊ trên màn hình
+            if desc:IsA("TextLabel") and string.find(string.lower(desc.Text or ""), "locked") then
+                if isGuiObjectVisible(desc) then
+                    isLocked = true
+                    return
                 end
             end
         end
@@ -3205,20 +3219,27 @@ task.spawn(function()
                         eggId = STATE.CaveHatchEggId or CAVE_DEFAULT_EGGS[STATE.CaveHatchCaveNum]
                     end
 
-                    -- Kiểm tra xem Trứng có bị khóa hoặc Hang đã đóng/cooldown giữa chừng hay không
+                    -- Kiểm tra xem Trứng có bị khóa hoặc biến mất hay không
+                    -- Lưu ý: Chỉ kiểm tra sau khi đã bắt đầu mở ít nhất 3 giây để tránh giật khi vừa teleport vào bệ trứng
                     local isEggOpen = eggObj and isEggUnlocked(eggObj)
-                    local _, isCaveCooldown = getCaveSignInfo(STATE.CaveHatchCaveNum)
-                    local isLockedOrClosed = (not isEggOpen) or isCaveCooldown
+                    if elapsed >= 3 and not isEggOpen then
+                        STATE.CaveHatchLockedCount = (STATE.CaveHatchLockedCount or 0) + 1
+                    else
+                        STATE.CaveHatchLockedCount = 0
+                    end
 
-                    if timeLeft <= 0 or (elapsed >= 1 and isLockedOrClosed) then
-                        -- KẾT THÚC HOẶC HỦY PHIÊN MỞ TRỨNG VÌ HANG ĐÓNG / TRỨNG BỊ KHÓA / HẾT GIỜ
+                    local eggConfirmedLocked = (STATE.CaveHatchLockedCount or 0) >= 5 -- Bị khóa liên tục ~1.5 giây
+
+                    if timeLeft <= 0 or eggConfirmedLocked then
+                        -- KẾT THÚC HOẶC HỦY PHIÊN MỞ TRỨNG VÌ HẾT GIỜ HOẶC TRỨNG BỊ KHÓA
                         local finishedCave = STATE.CaveHatchCaveNum
                         STATE.CaveHatchActive = false
+                        STATE.CaveHatchLockedCount = 0
                         if STATE.CaveHatchedForThisCycle then
                             STATE.CaveHatchedForThisCycle[finishedCave] = true
                         end
 
-                        if isLockedOrClosed and timeLeft > 0 then
+                        if eggConfirmedLocked and timeLeft > 0 then
                             STATE.CurrentAction = "🔒 Hang " .. finishedCave .. " đã đóng / Trứng bị khóa! Rời hang ngay..."
                             logActivity("MỞ_TRỨNG", "Hang " .. finishedCave .. " đã đóng hoặc trứng bị khóa. Thoát hang ngay lập tức!")
                         else
@@ -3393,8 +3414,7 @@ task.spawn(function()
                         -- Fallback nếu getCaveEgg bị chậm 1 nhịp do UI vừa mở (BẮT BUỘC TRỨNG PHẢI MỞ VÀ KHÔNG BỊ KHÓA)
                         if not eggObj and not (STATE.CaveHatchedForThisCycle and STATE.CaveHatchedForThisCycle[targetCave]) then
                             local mObj, mCF, mId = getCaveEggModel(targetCave)
-                            local isUnlocked, isCooldown = getCaveSignInfo(targetCave)
-                            if not isCooldown and mObj and mCF and isEggUnlocked(mObj) then
+                            if mObj and mCF and isEggUnlocked(mObj) then
                                 eggObj, eggCF, eggId = mObj, mCF, mId
                             end
                         end
@@ -3410,6 +3430,7 @@ task.spawn(function()
                             STATE.CaveHatchEggId = eggId
                             STATE.CaveHatchEggObj = eggObj
                             STATE.CaveHatchEggCF = eggCF
+                            STATE.CaveHatchLockedCount = 0
                             local hatchAmt = STATE.AutoMaxHatch and getMaxHatchAmount() or (tonumber(STATE.HatchAmount) or 58)
                             logActivity("MỞ_TRỨNG", "Bắt đầu phiên mở trứng Hang " .. targetCave .. " (" .. tostring(eggId) .. ") trong 5 phút. Tối đa: " .. hatchAmt .. " quả/lần.")
 
