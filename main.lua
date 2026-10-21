@@ -94,6 +94,11 @@ local StarterGui = game:GetService("StarterGui")
 local RS = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
 
+local VIM
+pcall(function()
+    VIM = game:GetService("VirtualInputManager")
+end)
+
 local Player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local Camera = workspace.CurrentCamera
 
@@ -1370,6 +1375,232 @@ getTravelingMerchant = function()
     return nil, nil, nil, nil, nil
 end
 
+-- ========================================================
+-- CÁC HÀM BỔ TRỢ TƯƠNG TÁC GIAO DIỆN TRAVELING MERCHANT
+-- ========================================================
+
+local function clickGuiButton(btn)
+    if not btn or not (btn:IsA("GuiButton") or btn:IsA("GuiObject")) then return false end
+
+    local absPos = btn.AbsolutePosition
+    local absSize = btn.AbsoluteSize
+    local centerX = math.floor(absPos.X + (absSize.X / 2))
+    local centerY = math.floor(absPos.Y + (absSize.Y / 2))
+
+    -- Lớp 1: VirtualInputManager (Hardware click tại tọa độ tâm nút)
+    if VIM then
+        pcall(function()
+            VIM:SendMouseButtonEvent(centerX, centerY, 0, true, game, 0)
+            task.wait(0.02)
+            VIM:SendMouseButtonEvent(centerX, centerY, 0, false, game, 0)
+        end)
+    end
+
+    -- Lớp 2: firesignal (Activated, MouseButton1Click, Down, Up)
+    if firesignal then
+        pcall(function() firesignal(btn.Activated) end)
+        pcall(function() firesignal(btn.MouseButton1Click) end)
+        pcall(function() firesignal(btn.MouseButton1Down) end)
+        task.wait(0.01)
+        pcall(function() firesignal(btn.MouseButton1Up) end)
+    end
+
+    -- Lớp 3: getconnections
+    if getconnections then
+        pcall(function()
+            for _, conn in pairs(getconnections(btn.Activated)) do conn:Fire() end
+            for _, conn in pairs(getconnections(btn.MouseButton1Click)) do conn:Fire() end
+        end)
+    end
+
+    -- Lớp 4: VirtualUser click dự phòng
+    if VirtualUser then
+        pcall(function()
+            VirtualUser:Button1Down(Vector2.new(centerX, centerY))
+            task.wait(0.02)
+            VirtualUser:Button1Up(Vector2.new(centerX, centerY))
+        end)
+    end
+
+    return true
+end
+
+local function findMerchantWindow()
+    local pGui = Player:FindFirstChild("PlayerGui")
+    if not pGui then return nil end
+
+    -- Ưu tiên 1: Quét TextLabel đặc trưng "Merchant!", "Refresh:", "Frequent Shopper"
+    for _, desc in ipairs(pGui:GetDescendants()) do
+        if desc:IsA("TextLabel") and desc.Visible then
+            local txt = string.lower(desc.Text or "")
+            if string.find(txt, "merchant!") or string.find(txt, "refresh:") or string.find(txt, "frequent shopper") then
+                local cur = desc.Parent
+                while cur and cur ~= pGui do
+                    if cur:IsA("GuiObject") and cur.Visible then
+                        if cur.AbsoluteSize.X >= 250 and cur.AbsoluteSize.Y >= 180 then
+                            return cur
+                        end
+                    end
+                    cur = cur.Parent
+                end
+            end
+        end
+    end
+
+    -- Ưu tiên 2: Tìm ScreenGui hoặc Frame có tên chứa "merchant" hoặc "travel"
+    for _, child in ipairs(pGui:GetChildren()) do
+        if child:IsA("ScreenGui") and child.Enabled then
+            local n = string.lower(child.Name)
+            if string.find(n, "merchant") or string.find(n, "travel") then
+                for _, sub in ipairs(child:GetChildren()) do
+                    if sub:IsA("GuiObject") and sub.Visible and sub.AbsoluteSize.X >= 250 and sub.AbsoluteSize.Y >= 180 then
+                        return sub
+                    end
+                end
+                return child
+            end
+        end
+    end
+
+    return nil
+end
+
+local function isCloseButton(btn, win)
+    if not btn or not (btn:IsA("TextButton") or btn:IsA("ImageButton")) then return false end
+    local btnText = string.lower(btn.Text or "")
+    local btnName = string.lower(btn.Name)
+    local bg = btn.BackgroundColor3
+
+    if btnText == "x" or btnText == "✕" or btnText == "x" then
+        return true
+    end
+
+    if string.find(btnName, "close") or string.find(btnName, "exit") then
+        return true
+    end
+
+    -- Nút màu đỏ ở góc trên bên phải
+    if bg.R > 0.6 and bg.G < 0.35 and bg.B < 0.35 then
+        if not win or btn.AbsolutePosition.Y < (win.AbsolutePosition.Y + 120) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function isCardSoldOut(btn, win)
+    local cur = btn.Parent
+    local depth = 0
+    while cur and cur ~= win and depth < 6 do
+        if cur:IsA("GuiObject") then
+            local isCard = false
+            if win then
+                isCard = (cur.AbsoluteSize.X < (win.AbsoluteSize.X * 0.6))
+            else
+                isCard = (cur.AbsoluteSize.X >= 50 and cur.AbsoluteSize.X <= 250 and cur.AbsoluteSize.Y >= 50 and cur.AbsoluteSize.Y <= 250)
+            end
+
+            if isCard then
+                for _, desc in ipairs(cur:GetDescendants()) do
+                    if desc:IsA("TextLabel") and desc.Visible then
+                        local txt = string.lower(desc.Text or "")
+                        if string.find(txt, "sold out") then
+                            return true
+                        end
+                    end
+                end
+                break
+            end
+        end
+        cur = cur.Parent
+        depth = depth + 1
+    end
+    return false
+end
+
+local function getMerchantBuyButtons(win)
+    local buttons = {}
+    if not win then return buttons end
+
+    for _, desc in ipairs(win:GetDescendants()) do
+        if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
+            local absSize = desc.AbsoluteSize
+            local isValidSize = absSize.X >= 30 and absSize.X <= 350 and absSize.Y >= 15 and absSize.Y <= 120
+
+            if isValidSize and not isCloseButton(desc, win) and not isCardSoldOut(desc, win) then
+                if desc.AbsolutePosition.Y > (win.AbsolutePosition.Y + 40) then
+                    table.insert(buttons, desc)
+                end
+            end
+        end
+    end
+
+    return buttons
+end
+
+local function checkAndConfirmPopup()
+    local pGui = Player:FindFirstChild("PlayerGui")
+    if not pGui then return false end
+
+    local confirmed = false
+    for _, desc in ipairs(pGui:GetDescendants()) do
+        if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
+            local t = string.lower(desc.Text or "")
+            local n = string.lower(desc.Name)
+            if t == "yes" or t == "confirm" or t == "đồng ý" or t == "ok" or n == "yes" or n == "confirm" or n == "accept" then
+                if not string.find(n, "close") and t ~= "x" then
+                    clickGuiButton(desc)
+                    confirmed = true
+                    task.wait(0.08)
+                end
+            end
+        end
+    end
+    return confirmed
+end
+
+local function closeMerchantWindow(win)
+    local targetWin = win or findMerchantWindow()
+    if targetWin then
+        for _, desc in ipairs(targetWin:GetDescendants()) do
+            if isCloseButton(desc, targetWin) and desc.Visible then
+                clickGuiButton(desc)
+                task.wait(0.2)
+                return true
+            end
+        end
+    end
+
+    local pGui = Player:FindFirstChild("PlayerGui")
+    if pGui then
+        for _, desc in ipairs(pGui:GetDescendants()) do
+            if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
+                local t = string.lower(desc.Text or "")
+                local n = string.lower(desc.Name)
+                if (t == "x" or t == "✕" or string.find(n, "close")) then
+                    local anc = desc.Parent
+                    local inMerchant = false
+                    while anc and anc ~= pGui do
+                        local aName = string.lower(anc.Name)
+                        if string.find(aName, "merchant") or string.find(aName, "travel") or string.find(aName, "shop") then
+                            inMerchant = true
+                            break
+                        end
+                        anc = anc.Parent
+                    end
+                    if inMerchant then
+                        clickGuiButton(desc)
+                        task.wait(0.2)
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
 handleTravelingMerchantPurchase = function(merchantObj, padCF)
     local char = Player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -1383,15 +1614,17 @@ handleTravelingMerchantPurchase = function(merchantObj, padCF)
     STATE.CurrentAction = "🛒 Đang mua sạch shop " .. merchantName .. "..."
 
     local ok, retErr = pcall(function()
-        local pad = merchantObj:FindFirstChild("Pad")
+        local pad = merchantObj:FindFirstChild("Pad") or merchantObj:FindFirstChildWhichIsA("BasePart")
         local padPos = pad and pad.Position or (padCF and padCF.Position) or merchantObj:GetPivot().Position
 
-        -- 1. Đứng trực tiếp và giữ nhân vật trên bục Pad trong 1.5 giây để game mở shop
-        for step = 1, 6 do
+        -- 1. Giữ nhân vật trên bục Pad và chờ cửa sổ Merchant xuất hiện (tối đa 3.5 giây)
+        local merchantWin = nil
+        local startWait = tick()
+        while tick() - startWait < 3.5 do
             if hrp then
                 hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                 hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                hrp.CFrame = CFrame.new(padPos + Vector3.new(0, 2.0, 0))
+                hrp.CFrame = CFrame.new(padPos + Vector3.new(0, 1.8, 0))
                 if pad and firetouchinterest then
                     pcall(function()
                         firetouchinterest(hrp, pad, 0)
@@ -1400,117 +1633,107 @@ handleTravelingMerchantPurchase = function(merchantObj, padCF)
                     end)
                 end
             end
-            task.wait(0.25)
+            merchantWin = findMerchantWindow()
+            if merchantWin then
+                break
+            end
+            task.wait(0.2)
         end
 
-        -- 2. Quét toàn bộ PlayerGui để click tất cả nút Mua (Buy Buttons) trong bảng shop
-        local buyButtonsClicked = 0
-        pcall(function()
-            local pGui = Player:FindFirstChild("PlayerGui")
-            if pGui then
-                for _, desc in pairs(pGui:GetDescendants()) do
-                    if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
-                        local btnText = string.lower(desc.Text or "")
-                        local btnName = string.lower(desc.Name)
+        if merchantWin then
+            logActivity("MERCHANT", "Đã mở thành công giao diện shop! Đang tiến hành mua vật phẩm...")
+        else
+            logActivity("MERCHANT", "Đang quét các nút mua trên toàn bộ giao diện màn hình...")
+        end
 
-                        -- Kiểm tra xem nút có nằm trong một khung liên quan đến Merchant / Shop hay không
-                        local isMerchantContext = false
-                        local anc = desc.Parent
-                        while anc and anc ~= pGui do
-                            local ancName = string.lower(anc.Name)
-                            if string.find(ancName, "merchant") or string.find(ancName, "travel") or string.find(ancName, "shop") or string.find(ancName, "cart") then
-                                isMerchantContext = true
-                                break
-                            end
-                            anc = anc.Parent
-                        end
-
-                        local isBuyBtn = string.find(btnText, "buy") or string.find(btnName, "buy") or string.find(btnText, "mua") or string.find(btnName, "purchase") or string.find(btnText, "purchase")
-
-                        if (isMerchantContext and isBuyBtn) or (isMerchantContext and (btnName == "action" or btnName == "button")) or (isBuyBtn and not string.find(btnName, "robux") and not string.find(btnText, "robux") and not string.find(btnText, "r$")) then
-                            if firesignal then
-                                pcall(function() firesignal(desc.Activated) end)
-                                pcall(function() firesignal(desc.MouseButton1Click) end)
-                                pcall(function() firesignal(desc.MouseButton1Down) end)
-                                pcall(function() firesignal(desc.MouseButton1Up) end)
-                            end
-                            if getconnections then
-                                pcall(function()
-                                    for _, conn in pairs(getconnections(desc.Activated)) do conn:Fire() end
-                                    for _, conn in pairs(getconnections(desc.MouseButton1Click)) do conn:Fire() end
-                                end)
-                            end
-                            buyButtonsClicked = buyButtonsClicked + 1
-                            task.wait(0.08)
+        -- 2. ĐỢT 1: Quét và click trực tiếp toàn bộ nút Mua (xanh lá / giá tiền)
+        local buyButtons = getMerchantBuyButtons(merchantWin)
+        if #buyButtons > 0 then
+            logActivity("MERCHANT", "Tìm thấy " .. #buyButtons .. " ô vật phẩm còn hàng. Bắt đầu bấm mua...")
+            for idx, btn in ipairs(buyButtons) do
+                local priceLabel = btn.Text or ""
+                if priceLabel == "" then
+                    for _, ch in ipairs(btn:GetChildren()) do
+                        if ch:IsA("TextLabel") and ch.Text ~= "" then
+                            priceLabel = ch.Text
+                            break
                         end
                     end
                 end
+                logActivity("MERCHANT", "Bấm mua vật phẩm #" .. idx .. (priceLabel ~= "" and (" (Giá: " .. priceLabel .. ")") or "") .. "...")
+                clickGuiButton(btn)
+                task.wait(0.12)
+                checkAndConfirmPopup()
+                task.wait(0.08)
             end
-        end)
-
-        -- 3. Click nút xác nhận mua nếu có popup hỏi Yes/Confirm
-        pcall(function()
-            local pGui = Player:FindFirstChild("PlayerGui")
-            if pGui then
-                for _, desc in pairs(pGui:GetDescendants()) do
-                    if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
-                        local t = string.lower(desc.Text or "")
-                        local n = string.lower(desc.Name)
-                        if t == "yes" or t == "confirm" or n == "yes" or n == "confirm" or t == "đồng ý" then
-                            if firesignal then
-                                pcall(function() firesignal(desc.Activated) end)
-                                pcall(function() firesignal(desc.MouseButton1Click) end)
+        else
+            -- Dự phòng: Quét toàn bộ PlayerGui nếu không xác định được merchantWin
+            pcall(function()
+                local pGui = Player:FindFirstChild("PlayerGui")
+                if pGui then
+                    for _, desc in pairs(pGui:GetDescendants()) do
+                        if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
+                            local absSize = desc.AbsoluteSize
+                            if absSize.X >= 40 and absSize.X <= 250 and absSize.Y >= 20 and absSize.Y <= 80 then
+                                if not isCloseButton(desc, nil) and not isCardSoldOut(desc, nil) then
+                                    local bg = desc.BackgroundColor3
+                                    local isGreenBtn = (bg.G > 0.45 and bg.G > bg.R and bg.G > bg.B)
+                                    local txt = string.lower(desc.Text or "")
+                                    local hasPriceText = string.find(txt, "%d") or string.find(txt, "k") or string.find(txt, "m") or string.find(txt, "b")
+                                    if isGreenBtn or hasPriceText then
+                                        clickGuiButton(desc)
+                                        task.wait(0.1)
+                                        checkAndConfirmPopup()
+                                    end
+                                end
                             end
                         end
                     end
                 end
-            end
-        end)
+            end)
+        end
 
-        -- 4. Đồng thời gọi qua RemoteFunction của Network
+        -- 3. Gọi RemoteFunction qua Network (Hỗ trợ key chuẩn 'TravelingMerchant' và tên xe)
         if Network and Network.Invoke then
-            for slot = 1, 8 do
-                pcall(function() Network.Invoke("Merchant_RequestPurchase", merchantName, slot) end)
+            for slot = 1, 6 do
                 pcall(function() Network.Invoke("Merchant_RequestPurchase", "TravelingMerchant", slot) end)
-                pcall(function() Network.Invoke("TravelingMerchant_RequestPurchase", slot) end)
-                pcall(function() Network.Invoke("TravelingMerchant_RequestPurchase", merchantName, slot) end)
+                pcall(function() Network.Invoke("Merchant_RequestPurchase", merchantName, slot) end)
                 task.wait(0.04)
             end
         end
+        if Network and Network.Fire then
+            for slot = 1, 6 do
+                pcall(function() Network.Fire("Merchant_RequestPurchase", "TravelingMerchant", slot) end)
+            end
+        end
 
-        -- Chờ 1.0 giây để hệ thống game xử lý xong các giao dịch mua
-        task.wait(1.0)
+        -- Chờ game xử lý giao dịch đợt 1
+        task.wait(0.4)
 
-        -- 5. TỰ ĐỘNG ĐÓNG BẢNG SHOP (Click nút X / Close trên giao diện)
-        pcall(function()
-            local pGui = Player:FindFirstChild("PlayerGui")
-            if pGui then
-                for _, desc in pairs(pGui:GetDescendants()) do
-                    if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
-                        local t = string.lower(desc.Text or "")
-                        local n = string.lower(desc.Name)
-                        if t == "x" or n == "close" or string.find(n, "close") or string.find(n, "exit") or string.find(t, "close") then
-                            local anc = desc.Parent
-                            local inMerchant = false
-                            while anc and anc ~= pGui do
-                                local aName = string.lower(anc.Name)
-                                if string.find(aName, "merchant") or string.find(aName, "travel") or string.find(aName, "shop") then
-                                    inMerchant = true
-                                    break
-                                end
-                                anc = anc.Parent
-                            end
-                            if inMerchant then
-                                if firesignal then
-                                    pcall(function() firesignal(desc.Activated) end)
-                                    pcall(function() firesignal(desc.MouseButton1Click) end)
-                                end
-                            end
-                        end
-                    end
+        -- 4. ĐỢT 2: Quét lại để mua nốt các vật phẩm còn tồn hoặc cần click nhiều lần
+        local remainingButtons = getMerchantBuyButtons(merchantWin or findMerchantWindow())
+        if #remainingButtons > 0 then
+            logActivity("MERCHANT", "Đợt 2: Mua nốt " .. #remainingButtons .. " vật phẩm còn lại...")
+            for _, btn in ipairs(remainingButtons) do
+                clickGuiButton(btn)
+                task.wait(0.1)
+                checkAndConfirmPopup()
+            end
+            if Network and Network.Invoke then
+                for slot = 1, 6 do
+                    pcall(function() Network.Invoke("Merchant_RequestPurchase", "TravelingMerchant", slot) end)
+                    task.wait(0.03)
                 end
             end
-        end)
+        end
+
+        -- Chờ giao dịch hoàn tất
+        task.wait(0.5)
+
+        -- 5. TỰ ĐỘNG ĐÓNG BẢNG SHOP (Nút X đỏ trên giao diện)
+        logActivity("MERCHANT", "Đang đóng cửa sổ shop...")
+        closeMerchantWindow(merchantWin or findMerchantWindow())
+        task.wait(0.3)
 
         -- 6. Teleport trở lại vị trí cũ an toàn
         safeTeleport(prevCF)
@@ -1542,7 +1765,10 @@ manualBuyTravelingMerchant = function()
     end
     STATE.LastMerchantName = mName
     STATE.LastMerchantTime = os.time()
-    return handleTravelingMerchantPurchase(mObj, mCF)
+    task.spawn(function()
+        handleTravelingMerchantPurchase(mObj, mCF)
+    end)
+    return true, "Đang bay tới " .. mName .. " để mua hàng..."
 end
 
 --========================================================================
@@ -3683,10 +3909,11 @@ task.spawn(function()
     -- ========================================================
     -- BỘ CHỐNG AFK & AUTO RECONNECT 4 LỚP (BULLETPROOF ANTI-AFK ENGINE)
     -- ========================================================
-    local VIM
-    pcall(function()
-        VIM = game:GetService("VirtualInputManager")
-    end)
+    if not VIM then
+        pcall(function()
+            VIM = game:GetService("VirtualInputManager")
+        end)
+    end
 
     -- Lớp 1: Bắt sự kiện Idled dự phòng nếu getconnections chưa tắt kịp
     pcall(function()
