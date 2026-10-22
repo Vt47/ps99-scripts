@@ -602,38 +602,62 @@ pcall(function()
         end
     end
 
-    -- 9.4 Kiểm tra và Test Remote Merchant_RequestPurchase
-    log("\n• [9.4] Kiểm tra và Test Remote Merchant_RequestPurchase:")
-    local netFolder = RS:FindFirstChild("Network")
-    if netFolder then
-        local rf = netFolder:FindFirstChild("Merchant_RequestPurchase")
-        if rf then
-            log(string.format("  - Tìm thấy: %s (Class: %s)", rf.Name, rf.ClassName))
-            if rf:IsA("RemoteFunction") then
-                local testSignatures = {
-                    {"TravelingMerchant", 1},
-                    {"TravelingMerchant4", 1},
-                    {"TravelingMerchant5", 1},
-                    {"Traveling", 1},
-                    {1},
-                    {"TravelingMerchant", 1, 1},
-                }
-                for _, sig in ipairs(testSignatures) do
-                    local sigStr = "{"
-                    for _, arg in ipairs(sig) do
-                        sigStr = sigStr .. (type(arg) == "string" and ("\"" .. arg .. "\"") or tostring(arg)) .. ", "
+    -- 9.4 Kiểm tra Directory.Merchants & Test Remotes
+    log("\n• [9.4] Kiểm tra Directory.Merchants & Test Remotes:")
+    pcall(function()
+        local dir = RS:FindFirstChild("Library") and RS.Library:FindFirstChild("Directory")
+        if dir and dir:FindFirstChild("Merchants") then
+            local merchantsDir = require(dir.Merchants)
+            local mKeys = {}
+            for k, _ in pairs(merchantsDir) do
+                table.insert(mKeys, tostring(k))
+            end
+            table.sort(mKeys)
+            log("  - Directory.Merchants tổng cộng " .. #mKeys .. " loại: [" .. table.concat(mKeys, ", ") .. "]")
+            
+            -- Test Merchant_RequestPurchase với các keys tìm được
+            local netFolder = RS:FindFirstChild("Network")
+            local rfM = netFolder and netFolder:FindFirstChild("Merchant_RequestPurchase")
+            if rfM and rfM:IsA("RemoteFunction") then
+                for _, k in ipairs(mKeys) do
+                    local lk = string.lower(k)
+                    if string.find(lk, "mountain") or string.find(lk, "camp") or string.find(lk, "diamond") or string.find(lk, "travel") or string.find(lk, "regular") or string.find(lk, "6") then
+                        local ok, r1, r2 = pcall(function() return rfM:InvokeServer(k, 1) end)
+                        log(string.format("    * Merchant_RequestPurchase(\"%s\", 1) => ok=%s, res1=%s, res2=%s", k, tostring(ok), tostring(r1), tostring(r2)))
+                        task.wait(0.1)
                     end
-                    sigStr = sigStr .. "}"
-                    local ok, res1, res2 = pcall(function()
-                        return rf:InvokeServer(unpack(sig))
-                    end)
-                    log(string.format("    * InvokeServer%s => ok=%s, res1=%s, res2=%s",
-                        sigStr, tostring(ok), tostring(res1), tostring(res2)))
-                    task.wait(0.15)
                 end
             end
         else
-            log("  - Không tìm thấy ReplicatedStorage.Network.Merchant_RequestPurchase")
+            log("  - Không tìm thấy ReplicatedStorage.Library.Directory.Merchants")
+        end
+    end)
+
+    -- Test Remote TravelingMerchant_RequestPurchase
+    local netFolder = RS:FindFirstChild("Network")
+    if netFolder then
+        local rfT = netFolder:FindFirstChild("TravelingMerchant_RequestPurchase")
+        if rfT and rfT:IsA("RemoteFunction") then
+            log("  - Tìm thấy: TravelingMerchant_RequestPurchase (RemoteFunction)")
+            local testSigs = {
+                {1},
+                {1, 1},
+                {"TravelingMerchant6", 1},
+                {6, 1},
+                {"TravelingMerchant", 1},
+            }
+            for _, sig in ipairs(testSigs) do
+                local sigStr = "{"
+                for _, a in ipairs(sig) do
+                    sigStr = sigStr .. (type(a) == "string" and ("\"" .. a .. "\"") or tostring(a)) .. ", "
+                end
+                sigStr = sigStr .. "}"
+                local ok, r1, r2 = pcall(function() return rfT:InvokeServer(unpack(sig)) end)
+                log(string.format("    * TravelingMerchant_RequestPurchase%s => ok=%s, res1=%s, res2=%s", sigStr, tostring(ok), tostring(r1), tostring(r2)))
+                task.wait(0.1)
+            end
+        else
+            log("  - Không tìm thấy ReplicatedStorage.Network.TravelingMerchant_RequestPurchase")
         end
     end
 end)

@@ -1494,6 +1494,18 @@ local function getMerchantWindow()
     local pGui = Player:FindFirstChild("PlayerGui")
     if not pGui then return nil end
 
+    -- Ưu tiên 0: Tìm trực tiếp PlayerGui._MACHINES.Merchant.Frame (Chính xác 100% theo dump PS99)
+    local machines = pGui:FindFirstChild("_MACHINES")
+    if machines then
+        local m = machines:FindFirstChild("Merchant")
+        if m then
+            local frame = m:FindFirstChild("Frame") or m:FindFirstChildWhichIsA("GuiObject")
+            if frame and frame.Visible then
+                return frame
+            end
+        end
+    end
+
     -- Ưu tiên 1: Quét TextLabel chứa "merchant", "refresh:" hoặc "restock:"
     for _, desc in ipairs(pGui:GetDescendants()) do
         if desc:IsA("TextLabel") and desc.Visible and not isMobileControl(desc) and not isSummitScriptGui(desc) and not isActionMenu(desc) then
@@ -1505,7 +1517,7 @@ local function getMerchantWindow()
                 while cur and cur ~= pGui and depth < 8 do
                     if cur:IsA("GuiObject") and cur.Visible and cur.AbsoluteSize.X >= 260 and cur.AbsoluteSize.Y >= 160 then
                         candidate = cur
-                        if cur.Parent and (cur.Parent:IsA("ScreenGui") or cur.Parent.Name == "PlayerGui") then
+                        if cur.Parent and (cur.Parent:IsA("ScreenGui") or cur.Parent.Name == "_MACHINES" or cur.Parent.Name == "PlayerGui") then
                             break
                         end
                     end
@@ -1603,7 +1615,10 @@ local function findMerchantGreenBuyButtons(merchantWin)
                     local n = string.lower(desc.Name or "")
                     local isNotItemIcon = not string.find(n, "icon") and not string.find(n, "item") and not string.find(n, "preview") and not string.find(n, "thumb")
 
-                    if isNotItemIcon and (price ~= "" or string.find(n, "buy") or string.find(n, "purchase")) then
+                    -- BẮT BUỘC: Có số giá tiền hợp lệ (%d, ví dụ 2.7b, 8.1b) và KHÔNG phải là Robux Pack (?,???)
+                    local hasValidPrice = price ~= "" and not string.find(price, "%?") and (string.find(price, "%d") ~= nil or string.find(string.lower(price), "free") ~= nil)
+
+                    if isNotItemIcon and hasValidPrice then
                         seen[desc] = true
                         table.insert(buyButtons, {
                             button = desc,
@@ -1624,6 +1639,11 @@ local function findMerchantGreenBuyButtons(merchantWin)
         end
         return a.x < b.x
     end)
+
+    -- Chỉ lấy tối đa 6 nút (tương ứng với 6 slot hạt dẻ của shop)
+    while #buyButtons > 6 do
+        table.remove(buyButtons)
+    end
 
     return buyButtons
 end
@@ -1761,6 +1781,13 @@ local function closeMerchantShop()
     -- 2. Đóng cửa sổ Merchant chính
     local merchantWin = getMerchantWindow()
     if merchantWin then
+        local directClose = merchantWin:FindFirstChild("Close") or merchantWin:FindFirstChild("close")
+        if directClose and (directClose:IsA("GuiButton") or directClose:IsA("GuiObject")) and directClose.Visible then
+            activateBuyButton(directClose)
+            task.wait(0.15)
+            return true
+        end
+
         for _, desc in ipairs(merchantWin:GetDescendants()) do
             if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
                 if isCloseButton(desc) then
@@ -1783,7 +1810,7 @@ local function closeMerchantShop()
                     local depth = 0
                     while anc and anc ~= pGui and depth < 6 do
                         local aName = string.lower(anc.Name or "")
-                        if string.find(aName, "merchant") or string.find(aName, "travel") then
+                        if string.find(aName, "merchant") or string.find(aName, "travel") or aName == "_machines" then
                             isMerchantClose = true
                             break
                         end
@@ -1809,97 +1836,92 @@ local function purchaseMerchantSlotViaRemote(merchantObj, slot)
     if merchantObj and merchantObj.Name then
         table.insert(merchantNames, merchantObj.Name)
     end
+    table.insert(merchantNames, "TravelingMerchant6")
     table.insert(merchantNames, "TravelingMerchant")
     table.insert(merchantNames, "Traveling Merchant")
     table.insert(merchantNames, "Traveling")
     table.insert(merchantNames, "Regular")
 
-    -- Tìm RemoteFunction Merchant_RequestPurchase
-    local rf = nil
+    -- Nạp tất cả các key chuẩn từ ReplicatedStorage.Library.Directory.Merchants
+    pcall(function()
+        local dir = RS:FindFirstChild("Library") and RS.Library:FindFirstChild("Directory")
+        if dir and dir:FindFirstChild("Merchants") then
+            local dirM = require(dir.Merchants)
+            for k, _ in pairs(dirM) do
+                table.insert(merchantNames, tostring(k))
+            end
+        end
+    end)
+
+    -- Tìm RemoteFunctions
+    local rfTravel = nil
+    local rfMerchant = nil
     pcall(function()
         local netFolder = RS:FindFirstChild("Network")
         if netFolder then
-            local obj = netFolder:FindFirstChild("Merchant_RequestPurchase")
-            if obj and obj:IsA("RemoteFunction") then
-                rf = obj
-            end
-        end
-        if not rf then
-            for _, desc in ipairs(RS:GetDescendants()) do
-                if desc:IsA("RemoteFunction") and string.find(string.lower(desc.Name), "merchant") and string.find(string.lower(desc.Name), "purchase") then
-                    rf = desc
-                    break
-                end
-            end
+            rfTravel = netFolder:FindFirstChild("TravelingMerchant_RequestPurchase")
+            rfMerchant = netFolder:FindFirstChild("Merchant_RequestPurchase")
         end
     end)
 
     local slotPurchased = false
 
-    -- 1. Gọi trực tiếp RemoteFunction:InvokeServer
-    if rf then
-        for _, mId in ipairs(merchantNames) do
-            -- Dạng chuẩn PS99: InvokeServer(merchantId, slotIndex)
+    -- 1. ƯU TIÊN 1: Gọi RemoteFunction chuyên dụng TravelingMerchant_RequestPurchase
+    if rfTravel and rfTravel:IsA("RemoteFunction") then
+        local travelAttempts = {
+            {slot},
+            {slot, 1},
+            {merchantObj and merchantObj.Name or "TravelingMerchant6", slot},
+            {6, slot},
+            {"TravelingMerchant", slot},
+        }
+        for _, args in ipairs(travelAttempts) do
             pcall(function()
                 local ok, res, res2 = pcall(function()
-                    return rf:InvokeServer(mId, slot)
+                    return rfTravel:InvokeServer(unpack(args))
                 end)
                 if ok and res ~= nil then
                     if res == true or (type(res) == "table" and (res.Success or res.success)) then
                         slotPurchased = true
-                        logActivity("MERCHANT", "✅ Mua thành công Món #" .. slot .. " (" .. mId .. ") qua Remote!")
+                        logActivity("MERCHANT", "✅ TravelingMerchant Remote: Mua thành công Món #" .. slot .. "!")
                     else
-                        logActivity("MERCHANT", "Remote [" .. mId .. ", #" .. slot .. "] phản hồi: " .. tostring(res) .. (res2 and (" (" .. tostring(res2) .. ")") or ""))
+                        logActivity("MERCHANT", "TravelingMerchant Remote [#" .. slot .. "] phản hồi: " .. tostring(res) .. (res2 and (" (" .. tostring(res2) .. ")") or ""))
                     end
                 end
             end)
             if slotPurchased then break end
-
-            -- Dạng có số lượng: InvokeServer(merchantId, slotIndex, 1)
-            pcall(function()
-                local ok, res, res2 = pcall(function()
-                    return rf:InvokeServer(mId, slot, 1)
-                end)
-                if ok and (res == true or (type(res) == "table" and (res.Success or res.success))) then
-                    slotPurchased = true
-                    logActivity("MERCHANT", "✅ Mua thành công Món #" .. slot .. " (" .. mId .. ", x1) qua Remote!")
-                end
-            end)
-            if slotPurchased then break end
-        end
-
-        -- Dạng chỉ truyền slot: InvokeServer(slotIndex)
-        if not slotPurchased then
-            pcall(function()
-                local ok, res, res2 = pcall(function()
-                    return rf:InvokeServer(slot)
-                end)
-                if ok and (res == true or (type(res) == "table" and (res.Success or res.success))) then
-                    slotPurchased = true
-                    logActivity("MERCHANT", "✅ Mua thành công Món #" .. slot .. " qua Remote (slot đơn)!")
-                end
-            end)
         end
     end
 
-    -- 2. Gọi qua Network.Invoke của game Library
-    if not slotPurchased and Network and type(Network.Invoke) == "function" then
+    -- 2. ƯU TIÊN 2: Gọi RemoteFunction Merchant_RequestPurchase với các merchantId chuẩn
+    if not slotPurchased and rfMerchant and rfMerchant:IsA("RemoteFunction") then
         for _, mId in ipairs(merchantNames) do
             pcall(function()
                 local ok, res, res2 = pcall(function()
-                    return Network.Invoke("Merchant_RequestPurchase", mId, slot)
+                    return rfMerchant:InvokeServer(mId, slot)
                 end)
                 if ok and res ~= nil then
                     if res == true or (type(res) == "table" and (res.Success or res.success)) then
                         slotPurchased = true
-                        logActivity("MERCHANT", "✅ Network.Invoke: Mua thành công Món #" .. slot .. " (" .. mId .. ")!")
-                    else
-                        logActivity("MERCHANT", "Network.Invoke [" .. mId .. ", #" .. slot .. "]: " .. tostring(res) .. (res2 and (" (" .. tostring(res2) .. ")") or ""))
+                        logActivity("MERCHANT", "✅ Merchant Remote: Mua thành công Món #" .. slot .. " (" .. mId .. ")!")
                     end
                 end
             end)
             if slotPurchased then break end
         end
+    end
+
+    -- 3. ƯU TIÊN 3: Gọi qua Network.Invoke của game Library
+    if not slotPurchased and Network and type(Network.Invoke) == "function" then
+        pcall(function()
+            local ok, res = pcall(function()
+                return Network.Invoke("TravelingMerchant_RequestPurchase", slot)
+            end)
+            if ok and (res == true or (type(res) == "table" and (res.Success or res.success))) then
+                slotPurchased = true
+                logActivity("MERCHANT", "✅ Network.Invoke: Mua thành công Món #" .. slot .. " (TravelingMerchant)!")
+            end
+        end)
     end
 
     return slotPurchased
