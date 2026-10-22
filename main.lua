@@ -179,6 +179,7 @@ local STATE = {
     IsBuyingMerchant = false,
     LastMerchantName = "",
     LastMerchantTime = 0,
+    MerchantRestockTime = 0,
     -- [YETI BOSS]
     AutoYeti = true,
     AutoClickYeti = true,
@@ -1379,6 +1380,19 @@ end
 -- CÁC HÀM BỔ TRỢ TƯƠNG TÁC GIAO DIỆN TRAVELING MERCHANT
 -- ========================================================
 
+local function parseRefreshTimer(str)
+    if not str or str == "" then return nil end
+    local h, m, s = string.match(str, "(%d+):(%d+):(%d+)")
+    if h and m and s then
+        return tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(s)
+    end
+    local m2, s2 = string.match(str, "(%d+):(%d+)")
+    if m2 and s2 then
+        return tonumber(m2) * 60 + tonumber(s2)
+    end
+    return nil
+end
+
 local function isSummitScriptGui(desc)
     local cur = desc
     while cur and cur ~= game do
@@ -2038,7 +2052,35 @@ handleTravelingMerchantPurchase = function(merchantObj, padCF)
         task.wait(0.4)
         dismissOopsPopup()
 
-        -- 5. TỰ ĐỘNG ĐÓNG BẢNG SHOP
+        -- 5. ĐỌC THỜI GIAN RESET HÀNG TỪ ĐỒNG HỒ "REFRESH" CỦA CỬA HÀNG
+        pcall(function()
+            if merchantWin then
+                local tLbl = merchantWin:FindFirstChild("Timer")
+                if not tLbl then
+                    for _, desc in ipairs(merchantWin:GetDescendants()) do
+                        if desc:IsA("TextLabel") and desc.Visible and string.find(string.lower(desc.Text or ""), "refresh") then
+                            tLbl = desc
+                            break
+                        end
+                    end
+                end
+                if tLbl and tLbl.Text ~= "" then
+                    local restockSec = parseRefreshTimer(tLbl.Text)
+                    if restockSec and restockSec > 30 then
+                        STATE.MerchantRestockTime = os.time() + restockSec
+                        logActivity("MERCHANT", "⏳ Cửa sổ shop báo hồi hàng mới sau: " .. formatDuration(restockSec) .. " (lúc " .. os.date("%H:%M:%S", STATE.MerchantRestockTime) .. ")")
+                    end
+                end
+            end
+        end)
+
+        -- Nếu không đọc được timer nhưng đã mua hàng (hoặc shop đã Sold Out), đặt thời gian chờ tối thiểu 2 tiếng
+        if (not STATE.MerchantRestockTime or STATE.MerchantRestockTime <= os.time()) and (totalUiBought > 0 or (merchantWin and #findMerchantGreenBuyButtons(merchantWin) == 0)) then
+            STATE.MerchantRestockTime = os.time() + 7200 -- 2 tiếng mặc định
+            logActivity("MERCHANT", "⏳ Shop đã hết hàng. Đặt thời gian chờ hồi đồ mới: 02h 00m")
+        end
+
+        -- 6. TỰ ĐỘNG ĐÓNG BẢNG SHOP
         logActivity("MERCHANT", "Hoàn tất các đợt mua! Đang đóng cửa sổ shop...")
         closeMerchantShop()
         task.wait(0.2)
@@ -2046,7 +2088,7 @@ handleTravelingMerchantPurchase = function(merchantObj, padCF)
         closeMerchantShop()
         task.wait(0.2)
 
-        -- 6. Teleport trở lại vị trí cũ an toàn
+        -- 7. Teleport trở lại vị trí cũ an toàn
         safeTeleport(prevCF)
         task.wait(0.4)
     end)
@@ -2070,6 +2112,7 @@ handleTravelingMerchantPurchase = function(merchantObj, padCF)
 end
 
 manualBuyTravelingMerchant = function()
+    STATE.MerchantRestockTime = 0 -- Reset bộ đếm khi người dùng tự tay bấm mua
     local mObj, mCF, mName, mPad, timerText = getTravelingMerchant()
     if not mObj then
         return false, "Hiện không có Traveling Merchant nào xuất hiện trên server!"
@@ -4200,18 +4243,23 @@ task.spawn(function()
         while _G.PS99_SUMMIT_RUNNING and _G.PS99_SUMMIT_SESSION == CURRENT_SESSION_ID do
             task.wait(3)
             if not STATE.IsPaused and STATE.AutoTravelingMerchant then
-                local mObj, mCF, mName, mPad, timerText = getTravelingMerchant()
-                if mObj and mName then
-                    local isNewMerchant = (STATE.LastMerchantName ~= mName) or (os.time() - STATE.LastMerchantTime > 600)
-                    if isNewMerchant then
-                        -- ƯU TIÊN TUYỆT ĐỐI CHO HANG: Không ngắt quãng khi đang mở trứng hang hoặc phá rương hang
-                        local inCaveSession = (STATE.CaveHatchActive and STATE.AutoHatch) or (STATE.IsAttackingCaveChest and STATE.AutoCaveChests)
-                        if not inCaveSession and not STATE.IsFightingYeti and not STATE.IsBuyingMerchant then
-                            STATE.LastMerchantName = mName
-                            STATE.LastMerchantTime = os.time()
-                            pcall(function()
-                                handleTravelingMerchantPurchase(mObj, mCF)
-                            end)
+                -- KIỂM TRA THỜI GIAN RESET HÀNG CỦA CỬA HÀNG
+                -- Nếu shop đã mua sạch đồ và vẫn đang đếm ngược chờ reset (mấy tiếng một lần), KHÔNG teleport tới làm gì!
+                local isRestocking = STATE.MerchantRestockTime and os.time() < STATE.MerchantRestockTime
+                if not isRestocking then
+                    local mObj, mCF, mName, mPad, timerText = getTravelingMerchant()
+                    if mObj and mName then
+                        local isNewMerchant = (STATE.LastMerchantName ~= mName) or (os.time() - STATE.LastMerchantTime > 600)
+                        if isNewMerchant then
+                            -- ƯU TIÊN TUYỆT ĐỐI CHO HANG: Không ngắt quãng khi đang mở trứng hang hoặc phá rương hang
+                            local inCaveSession = (STATE.CaveHatchActive and STATE.AutoHatch) or (STATE.IsAttackingCaveChest and STATE.AutoCaveChests)
+                            if not inCaveSession and not STATE.IsFightingYeti and not STATE.IsBuyingMerchant then
+                                STATE.LastMerchantName = mName
+                                STATE.LastMerchantTime = os.time()
+                                pcall(function()
+                                    handleTravelingMerchantPurchase(mObj, mCF)
+                                end)
+                            end
                         end
                     end
                 end
