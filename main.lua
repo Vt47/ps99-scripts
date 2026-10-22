@@ -1441,9 +1441,34 @@ local function clickGuiButton(btn)
     return true
 end
 
+local function getGuiText(obj)
+    if not obj then return "" end
+    if obj:IsA("TextButton") or obj:IsA("TextLabel") or obj:IsA("TextBox") then
+        return obj.Text or ""
+    end
+    for _, ch in ipairs(obj:GetChildren()) do
+        if ch:IsA("TextLabel") and ch.Text ~= "" then
+            return ch.Text
+        end
+    end
+    return ""
+end
+
+local function isMobileControl(desc)
+    local cur = desc
+    while cur and cur ~= game do
+        local n = cur.Name
+        if n == "TouchGui" or n == "TouchControlFrame" or n == "DynamicThumbstickFrame" or n == "ControlFrame" then
+            return true
+        end
+        cur = cur.Parent
+    end
+    return false
+end
+
 local function isCloseButton(btn)
     if not btn or not (btn:IsA("TextButton") or btn:IsA("ImageButton")) then return false end
-    local btnText = string.lower(btn.Text or "")
+    local btnText = string.lower(getGuiText(btn))
     local btnName = string.lower(btn.Name)
     local bg = btn.BackgroundColor3
 
@@ -1501,30 +1526,23 @@ local function findAllMerchantBuyButtons()
     local buyButtons = {}
 
     for _, desc in ipairs(pGui:GetDescendants()) do
-        if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
+        if not isMobileControl(desc) and (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
             local absSize = desc.AbsoluteSize
             -- Kích thước nút bấm mua tiêu chuẩn trong ô thẻ
-            if absSize.X >= 35 and absSize.X <= 380 and absSize.Y >= 15 and absSize.Y <= 110 then
+            if absSize.X >= 30 and absSize.X <= 380 and absSize.Y >= 15 and absSize.Y <= 110 then
                 if not isCloseButton(desc) and not isCardSoldOut(desc) then
                     local bg = desc.BackgroundColor3
                     local isGreen = (bg.G > 0.38 and bg.G > bg.R * 1.15 and bg.G > bg.B * 1.15)
 
-                    -- Kiểm tra xem nút có chứa nhãn giá tiền không (ví dụ "2.7b", "8.1b", "50k", v.v.)
-                    local txt = desc.Text or ""
-                    if txt == "" then
-                        for _, ch in ipairs(desc:GetChildren()) do
-                            if ch:IsA("TextLabel") and ch.Text ~= "" then
-                                txt = ch.Text
-                                break
-                            end
-                        end
-                    end
+                    local txt = getGuiText(desc)
                     local hasPriceText = string.find(txt, "%d") or string.find(string.lower(txt), "k") or string.find(string.lower(txt), "m") or string.find(string.lower(txt), "b")
 
                     local btnName = string.lower(desc.Name)
                     local isNamedButton = (btnName == "buy" or btnName == "button" or btnName == "action" or string.find(btnName, "slot") or string.find(btnName, "purchase"))
 
-                    if isGreen or hasPriceText or isNamedButton then
+                    local isExcluded = string.find(btnName, "robux") or string.find(string.lower(txt), "r$")
+
+                    if not isExcluded and (isGreen or hasPriceText or isNamedButton) then
                         table.insert(buyButtons, {
                             button = desc,
                             price = txt
@@ -1544,16 +1562,8 @@ local function checkAndConfirmPopup()
 
     local confirmed = false
     for _, desc in ipairs(pGui:GetDescendants()) do
-        if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
-            local t = string.lower(desc.Text or "")
-            if t == "" then
-                for _, ch in ipairs(desc:GetChildren()) do
-                    if ch:IsA("TextLabel") and ch.Text ~= "" then
-                        t = string.lower(ch.Text)
-                        break
-                    end
-                end
-            end
+        if not isMobileControl(desc) and (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
+            local t = string.lower(getGuiText(desc))
             local n = string.lower(desc.Name)
             if t == "yes" or t == "confirm" or t == "đồng ý" or t == "ok" or n == "yes" or n == "confirm" or n == "accept" then
                 if not string.find(n, "close") and t ~= "x" then
@@ -1572,7 +1582,7 @@ local function closeMerchantShop()
     if not pGui then return false end
 
     for _, desc in ipairs(pGui:GetDescendants()) do
-        if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
+        if not isMobileControl(desc) and (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
             if isCloseButton(desc) then
                 local anc = desc.Parent
                 local isMerchantClose = false
