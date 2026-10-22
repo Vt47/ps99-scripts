@@ -1465,21 +1465,32 @@ end
 
 local function isCardSoldOut(btn)
     local cur = btn.Parent
+    local cardFrame = nil
     local depth = 0
-    while cur and cur ~= game and depth < 6 do
+    while cur and cur ~= game and depth < 4 do
         if cur:IsA("GuiObject") then
-            for _, desc in ipairs(cur:GetDescendants()) do
-                if desc:IsA("TextLabel") and desc.Visible then
-                    local txt = string.lower(desc.Text or "")
-                    if string.find(txt, "sold out") then
-                        return true
-                    end
-                end
+            -- Thẻ slot riêng lẻ luôn có chiều ngang nhỏ hơn 240px (vì màn hình chia 3 cột)
+            if cur.AbsoluteSize.X >= 40 and cur.AbsoluteSize.X <= 240 and cur.AbsoluteSize.Y >= 40 and cur.AbsoluteSize.Y <= 280 then
+                cardFrame = cur
+                break
             end
         end
         cur = cur.Parent
         depth = depth + 1
     end
+
+    -- Nếu tìm được thẻ slot, chỉ quét con của ĐÚNG thẻ này để xem có chữ "Sold Out" hay không
+    if cardFrame then
+        for _, desc in ipairs(cardFrame:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Visible then
+                local txt = string.lower(desc.Text or "")
+                if string.find(txt, "sold out") then
+                    return true
+                end
+            end
+        end
+    end
+
     return false
 end
 
@@ -1632,22 +1643,28 @@ handleTravelingMerchantPurchase = function(merchantObj, padCF)
         logActivity("MERCHANT", "Đã tiếp cận bục Pad thành công. Đang tiến hành mua hàng...")
 
         -- 2. HÀM GỌI TOÀN BỘ NETWORK REMOTES CHO TẤT CẢ CÁC SLOTS (1 đến 6)
+        -- Lưu ý: Merchant_RequestPurchase là RemoteFunction nên CHỈ dùng Invoke/InvokeServer (KHÔNG dùng FireServer)
         local function fireAllPurchaseRemotes()
             if Network and Network.Invoke then
                 for slot = 1, 6 do
-                    pcall(function() Network.Invoke("Merchant_RequestPurchase", "TravelingMerchant", slot) end)
-                    pcall(function() Network.Invoke("Merchant_RequestPurchase", merchantName, slot) end)
-                    pcall(function() Network.Invoke("TravelingMerchant_RequestPurchase", slot) end)
-                    pcall(function() Network.Invoke("TravelingMerchant_RequestPurchase", "TravelingMerchant", slot) end)
+                    pcall(function()
+                        local ok, res = pcall(function()
+                            return Network.Invoke("Merchant_RequestPurchase", "TravelingMerchant", slot)
+                        end)
+                        if ok and res ~= nil then
+                            logActivity("MERCHANT", "Remote [TravelingMerchant, Slot " .. slot .. "] -> " .. tostring(res))
+                        end
+                    end)
+                    pcall(function()
+                        Network.Invoke("Merchant_RequestPurchase", slot)
+                    end)
+                    pcall(function()
+                        Network.Invoke("TravelingMerchant_RequestPurchase", slot)
+                    end)
                     task.wait(0.03)
                 end
             end
-            if Network and Network.Fire then
-                for slot = 1, 6 do
-                    pcall(function() Network.Fire("Merchant_RequestPurchase", "TravelingMerchant", slot) end)
-                    pcall(function() Network.Fire("Merchant_RequestPurchase", merchantName, slot) end)
-                end
-            end
+
             pcall(function()
                 local netFolder = RS:FindFirstChild("Network")
                 if netFolder then
@@ -1655,8 +1672,8 @@ handleTravelingMerchantPurchase = function(merchantObj, padCF)
                     if rf and rf:IsA("RemoteFunction") then
                         for slot = 1, 6 do
                             pcall(function() rf:InvokeServer("TravelingMerchant", slot) end)
-                            pcall(function() rf:InvokeServer(merchantName, slot) end)
-                            task.wait(0.03)
+                            pcall(function() rf:InvokeServer(slot) end)
+                            task.wait(0.02)
                         end
                     end
                 end
