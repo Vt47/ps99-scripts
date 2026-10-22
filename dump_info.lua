@@ -482,6 +482,162 @@ for _, desc in pairs(workspace:GetDescendants()) do
 end
 log("Tổng số ProximityPrompt gần: " .. promptCount)
 
+-- 9. CHẨN ĐOÁN TOÀN DIỆN TRAVELING MERCHANT, SHOP UI & REMOTES
+log("\n[9. CHẨN ĐOÁN TRAVELING MERCHANT, SHOP UI & REMOTES]")
+pcall(function()
+    -- 9.1 Quét Merchant trong Workspace
+    log("• [9.1] Quét Model/Folder Merchant trong Workspace:")
+    local mCount = 0
+    for _, desc in pairs(workspace:GetDescendants()) do
+        local lN = string.lower(desc.Name or "")
+        if (string.find(lN, "travel") or string.find(lN, "merchant")) and (desc:IsA("Model") or desc:IsA("Folder") or desc:IsA("BasePart")) then
+            mCount = mCount + 1
+            local pPos = nil
+            pcall(function()
+                if desc:IsA("BasePart") then pPos = desc.Position
+                elseif desc:IsA("Model") then pPos = desc:GetPivot().Position end
+            end)
+            local dist = (pPos and hrp) and (pPos - hrp.Position).Magnitude or 999999
+            local chNames = {}
+            for _, ch in ipairs(desc:GetChildren()) do
+                table.insert(chNames, ch.Name .. " (" .. ch.ClassName .. ")")
+            end
+            log(string.format("  - [%s] %s | Cách: %.1f studs | Pos: %s",
+                desc.ClassName, desc:GetFullName(), dist, pPos and string.format("Vector3.new(%.1f, %.1f, %.1f)", pPos.X, pPos.Y, pPos.Z) or "Nil"))
+            log("    Children: [" .. table.concat(chNames, ", ") .. "]")
+            
+            -- Kiểm tra Pad
+            local pad = desc:FindFirstChild("Pad") or desc:FindFirstChildWhichIsA("BasePart")
+            if pad then
+                log(string.format("    Pad: %s (Class: %s, Pos: Vector3.new(%.1f, %.1f, %.1f))",
+                    pad.Name, pad.ClassName, pad.Position.X, pad.Position.Y, pad.Position.Z))
+            end
+        end
+    end
+    if mCount == 0 then log("  - Không tìm thấy object nào có tên chứa 'travel' hoặc 'merchant' trong Workspace.") end
+
+    -- 9.2 Quét Giao Diện Shop Merchant trong PlayerGui
+    log("\n• [9.2] Quét Giao Diện Shop Merchant trong PlayerGui:")
+    local pGui = Player:FindFirstChild("PlayerGui")
+    if pGui then
+        local foundMerchantGuis = {}
+        for _, desc in ipairs(pGui:GetDescendants()) do
+            if desc:IsA("TextLabel") and desc.Visible then
+                local txt = string.lower(desc.Text or "")
+                if string.find(txt, "merchant") or string.find(txt, "refresh:") or string.find(txt, "restock:") then
+                    table.insert(foundMerchantGuis, desc)
+                end
+            end
+        end
+        log(string.format("  - Tìm thấy %d TextLabels tiêu đề Shop:", #foundMerchantGuis))
+        for i, lbl in ipairs(foundMerchantGuis) do
+            log(string.format("    #%d: \"%s\" (Path: %s)", i, lbl.Text, lbl:GetFullName()))
+            -- Quét frame cha (cửa sổ shop)
+            local cur = lbl.Parent
+            local winFrame = nil
+            local depth = 0
+            while cur and cur ~= pGui and depth < 6 do
+                if cur:IsA("GuiObject") and cur.Visible and cur.AbsoluteSize.X >= 250 and cur.AbsoluteSize.Y >= 150 then
+                    winFrame = cur
+                    break
+                end
+                cur = cur.Parent
+                depth = depth + 1
+            end
+            if winFrame then
+                log(string.format("    -> Cửa sổ cha: %s (Class: %s, Size: %dx%d)",
+                    winFrame.Name, winFrame.ClassName, winFrame.AbsoluteSize.X, winFrame.AbsoluteSize.Y))
+                -- Liệt kê tất cả các Buttons trong cửa sổ này
+                local btnList = {}
+                for _, btn in ipairs(winFrame:GetDescendants()) do
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                        local btnTexts = {}
+                        if btn:IsA("TextButton") and btn.Text ~= "" then table.insert(btnTexts, btn.Text) end
+                        for _, sub in ipairs(btn:GetDescendants()) do
+                            if sub:IsA("TextLabel") and sub.Visible and sub.Text ~= "" then
+                                table.insert(btnTexts, sub.Text)
+                            end
+                        end
+                        local txtJoined = table.concat(btnTexts, " | ")
+                        table.insert(btnList, string.format("[%s: %s, Size: %dx%d, Pos: (%d, %d), Text: \"%s\"]",
+                            btn.ClassName, btn.Name, btn.AbsoluteSize.X, btn.AbsoluteSize.Y, btn.AbsolutePosition.X, btn.AbsolutePosition.Y, txtJoined))
+                    end
+                end
+                log("    -> Các nút bấm tìm thấy (" .. #btnList .. "):")
+                for _, bInfo in ipairs(btnList) do
+                    log("       " .. bInfo)
+                end
+            end
+        end
+    end
+
+    -- 9.3 Kiểm tra ReplicatedStorage.Library.Client
+    log("\n• [9.3] Kiểm tra ReplicatedStorage.Library.Client Modules:")
+    if Client then
+        local clientModules = {}
+        for _, m in ipairs(Client:GetChildren()) do
+            table.insert(clientModules, m.Name .. " (" .. m.ClassName .. ")")
+        end
+        table.sort(clientModules)
+        log("  - Client modules: [" .. table.concat(clientModules, ", ") .. "]")
+
+        if Client:FindFirstChild("MerchantCmds") then
+            pcall(function()
+                local mCmds = require(Client.MerchantCmds)
+                local funcs = {}
+                for k, v in pairs(mCmds) do
+                    table.insert(funcs, tostring(k) .. " (" .. type(v) .. ")")
+                end
+                log("  - MerchantCmds exports: [" .. table.concat(funcs, ", ") .. "]")
+            end)
+        end
+
+        if Network then
+            local netKeys = {}
+            for k, v in pairs(Network) do
+                table.insert(netKeys, tostring(k) .. " (" .. type(v) .. ")")
+            end
+            table.sort(netKeys)
+            log("  - Network exports: [" .. table.concat(netKeys, ", ") .. "]")
+        end
+    end
+
+    -- 9.4 Kiểm tra và Test Remote Merchant_RequestPurchase
+    log("\n• [9.4] Kiểm tra và Test Remote Merchant_RequestPurchase:")
+    local netFolder = RS:FindFirstChild("Network")
+    if netFolder then
+        local rf = netFolder:FindFirstChild("Merchant_RequestPurchase")
+        if rf then
+            log(string.format("  - Tìm thấy: %s (Class: %s)", rf.Name, rf.ClassName))
+            if rf:IsA("RemoteFunction") then
+                local testSignatures = {
+                    {"TravelingMerchant", 1},
+                    {"TravelingMerchant4", 1},
+                    {"TravelingMerchant5", 1},
+                    {"Traveling", 1},
+                    {1},
+                    {"TravelingMerchant", 1, 1},
+                }
+                for _, sig in ipairs(testSignatures) do
+                    local sigStr = "{"
+                    for _, arg in ipairs(sig) do
+                        sigStr = sigStr .. (type(arg) == "string" and ("\"" .. arg .. "\"") or tostring(arg)) .. ", "
+                    end
+                    sigStr = sigStr .. "}"
+                    local ok, res1, res2 = pcall(function()
+                        return rf:InvokeServer(unpack(sig))
+                    end)
+                    log(string.format("    * InvokeServer%s => ok=%s, res1=%s, res2=%s",
+                        sigStr, tostring(ok), tostring(res1), tostring(res2)))
+                    task.wait(0.15)
+                end
+            end
+        else
+            log("  - Không tìm thấy ReplicatedStorage.Network.Merchant_RequestPurchase")
+        end
+    end
+end)
+
 log("\n==================================================================")
 log("                       KẾT THÚC BÁO CÁO                          ")
 log("==================================================================")

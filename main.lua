@@ -1442,14 +1442,16 @@ local function clickGuiButton(btn)
     end
 
     -- 2. getconnections (Kích hoạt trực tiếp callback của Roact / UI script trong bộ nhớ)
-    if getconnections then
+    if typeof(getconnections) == "function" then
         for _, sig in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down"}) do
             pcall(function()
                 for _, conn in pairs(getconnections(btn[sig])) do
-                    if conn.Fire then
-                        conn:Fire()
-                    elseif conn.Function then
-                        task.spawn(conn.Function)
+                    if typeof(conn) == "table" or typeof(conn) == "userdata" then
+                        if typeof(conn.Fire) == "function" then
+                            pcall(function() conn:Fire() end)
+                        elseif typeof(conn.Function) == "function" then
+                            pcall(function() conn.Function() end)
+                        end
                     end
                 end
             end)
@@ -1503,6 +1505,9 @@ local function getMerchantWindow()
                 while cur and cur ~= pGui and depth < 8 do
                     if cur:IsA("GuiObject") and cur.Visible and cur.AbsoluteSize.X >= 260 and cur.AbsoluteSize.Y >= 160 then
                         candidate = cur
+                        if cur.Parent and (cur.Parent:IsA("ScreenGui") or cur.Parent.Name == "PlayerGui") then
+                            break
+                        end
                     end
                     cur = cur.Parent
                     depth = depth + 1
@@ -1559,6 +1564,26 @@ local function isCardSoldOut(btn, merchantWin)
     return false
 end
 
+local function getButtonPriceText(btn)
+    if not btn then return "" end
+    local texts = {}
+    if (btn:IsA("TextButton") or btn:IsA("TextLabel")) and btn.Text and btn.Text ~= "" then
+        table.insert(texts, btn.Text)
+    end
+    for _, desc in ipairs(btn:GetDescendants()) do
+        if desc:IsA("TextLabel") and desc.Visible and desc.Text and desc.Text ~= "" then
+            table.insert(texts, desc.Text)
+        end
+    end
+    for _, t in ipairs(texts) do
+        local lt = string.lower(t)
+        if string.find(lt, "%d") or string.find(lt, "free") then
+            return t
+        end
+    end
+    return ""
+end
+
 local function findMerchantGreenBuyButtons(merchantWin)
     if not merchantWin then
         merchantWin = getMerchantWindow()
@@ -1569,35 +1594,36 @@ local function findMerchantGreenBuyButtons(merchantWin)
     local seen = {}
 
     for _, desc in ipairs(merchantWin:GetDescendants()) do
-        if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible and not seen[desc] and not isActionMenu(desc) then
-            local absSize = desc.AbsoluteSize
-            -- Nút mua là nút chữ nhật ngang nằm dưới thẻ: rộng 45-280px, cao 18-75px, ngang/dọc >= 1.2
-            if absSize.X >= 45 and absSize.X <= 280 and absSize.Y >= 18 and absSize.Y <= 75 and (absSize.X >= absSize.Y * 1.2) then
-                if not isCloseButton(desc) and not isCardSoldOut(desc, merchantWin) then
-                    local bg = desc.BackgroundColor3
-                    -- Màu xanh lá đặc trưng của nút mua (xanh sáng hơn đỏ và lam ít nhất 15%)
-                    local isGreen = (bg.G > 0.38 and bg.G > bg.R * 1.15 and bg.G > bg.B * 1.15)
-
-                    local txt = getGuiText(desc)
-                    -- Có chữ số giá tiền (ví dụ: 2.7b, 8.1b, 25k, 50,000, Free)
-                    local hasPriceText = string.find(txt, "%d") ~= nil or string.find(string.lower(txt), "free")
-
+        if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible and not seen[desc] and not isActionMenu(desc) and not isMobileControl(desc) and not isSummitScriptGui(desc) then
+            if not isCloseButton(desc) and not isCardSoldOut(desc, merchantWin) then
+                local absSize = desc.AbsoluteSize
+                -- Nút mua trên màn hình mobile / tablet có kích thước ngang 35-320px, dọc 15-85px
+                if absSize.X >= 35 and absSize.X <= 320 and absSize.Y >= 15 and absSize.Y <= 85 then
+                    local price = getButtonPriceText(desc)
                     local n = string.lower(desc.Name or "")
-                    local isIcon = string.find(n, "icon") or string.find(n, "image") or string.find(n, "item") or string.find(n, "preview") or string.find(n, "thumb")
+                    local isNotItemIcon = not string.find(n, "icon") and not string.find(n, "item") and not string.find(n, "preview") and not string.find(n, "thumb")
 
-                    -- BẮT BUỘC: Không phải là icon vật phẩm, VÀ (phải là nút xanh HOẶC có số giá tiền)
-                    if not isIcon and (isGreen or hasPriceText) then
+                    if isNotItemIcon and (price ~= "" or string.find(n, "buy") or string.find(n, "purchase")) then
                         seen[desc] = true
                         table.insert(buyButtons, {
                             button = desc,
-                            price = txt
+                            price = price,
+                            y = desc.AbsolutePosition.Y,
+                            x = desc.AbsolutePosition.X
                         })
-                        if #buyButtons >= 6 then break end
                     end
                 end
             end
         end
     end
+
+    -- Sắp xếp theo thứ tự hiển thị trên màn hình: trên xuống dưới, trái qua phải (lưới slot 1 đến 6)
+    table.sort(buyButtons, function(a, b)
+        if math.abs(a.y - b.y) > 20 then
+            return a.y < b.y
+        end
+        return a.x < b.x
+    end)
 
     return buyButtons
 end
@@ -1607,22 +1633,28 @@ local function activateBuyButton(btn)
     if not btn.Visible then return false end
     if isActionMenu(btn) then return false end
 
-    -- 1. firesignal (Kích hoạt trực tiếp sự kiện Activated / MouseButton1Click trong bộ nhớ)
-    if firesignal then
+    -- 1. firesignal (Kích hoạt trực tiếp các sự kiện trong bộ nhớ)
+    if typeof(firesignal) == "function" then
+        pcall(function() firesignal(btn.MouseButton1Down) end)
+        task.wait(0.01)
         pcall(function() firesignal(btn.Activated) end)
+        task.wait(0.01)
+        pcall(function() firesignal(btn.MouseButton1Up) end)
         task.wait(0.01)
         pcall(function() firesignal(btn.MouseButton1Click) end)
     end
 
-    -- 2. getconnections (Kích hoạt callback kết nối của game Roact)
-    if getconnections then
+    -- 2. getconnections (An toàn tuyệt đối, chỉ gọi khi typeof == 'function')
+    if typeof(getconnections) == "function" then
         for _, sig in ipairs({"Activated", "MouseButton1Click"}) do
             pcall(function()
                 for _, conn in pairs(getconnections(btn[sig])) do
-                    if conn.Fire then
-                        conn:Fire()
-                    elseif conn.Function then
-                        task.spawn(conn.Function)
+                    if typeof(conn) == "table" or typeof(conn) == "userdata" then
+                        if typeof(conn.Fire) == "function" then
+                            pcall(function() conn:Fire() end)
+                        elseif typeof(conn.Function) == "function" then
+                            pcall(function() conn.Function() end)
+                        end
                     end
                 end
             end)
@@ -1671,14 +1703,22 @@ local function dismissOopsPopup()
 
                 if targetBtn then
                     logActivity("MERCHANT", "⚠️ Phát hiện thông báo: '" .. (desc.Text or "Oops!") .. "'. Tự động đóng [Ok!]...")
-                    if firesignal then
+                    if typeof(firesignal) == "function" then
+                        pcall(function() firesignal(targetBtn.MouseButton1Down) end)
                         pcall(function() firesignal(targetBtn.Activated) end)
+                        pcall(function() firesignal(targetBtn.MouseButton1Up) end)
                         pcall(function() firesignal(targetBtn.MouseButton1Click) end)
                     end
-                    if getconnections then
+                    if typeof(getconnections) == "function" then
                         pcall(function()
                             for _, conn in pairs(getconnections(targetBtn.Activated)) do
-                                if conn.Fire then conn:Fire() elseif conn.Function then task.spawn(conn.Function) end
+                                if typeof(conn) == "table" or typeof(conn) == "userdata" then
+                                    if typeof(conn.Fire) == "function" then
+                                        pcall(function() conn:Fire() end)
+                                    elseif typeof(conn.Function) == "function" then
+                                        pcall(function() conn.Function() end)
+                                    end
+                                end
                             end
                         end)
                     end
@@ -1771,6 +1811,8 @@ local function purchaseMerchantSlotViaRemote(merchantObj, slot)
     end
     table.insert(merchantNames, "TravelingMerchant")
     table.insert(merchantNames, "Traveling Merchant")
+    table.insert(merchantNames, "Traveling")
+    table.insert(merchantNames, "Regular")
 
     -- Tìm RemoteFunction Merchant_RequestPurchase
     local rf = nil
@@ -1799,7 +1841,7 @@ local function purchaseMerchantSlotViaRemote(merchantObj, slot)
         for _, mId in ipairs(merchantNames) do
             -- Dạng chuẩn PS99: InvokeServer(merchantId, slotIndex)
             pcall(function()
-                local ok, res = pcall(function()
+                local ok, res, res2 = pcall(function()
                     return rf:InvokeServer(mId, slot)
                 end)
                 if ok and res ~= nil then
@@ -1807,7 +1849,7 @@ local function purchaseMerchantSlotViaRemote(merchantObj, slot)
                         slotPurchased = true
                         logActivity("MERCHANT", "✅ Mua thành công Món #" .. slot .. " (" .. mId .. ") qua Remote!")
                     else
-                        logActivity("MERCHANT", "Remote [" .. mId .. ", #" .. slot .. "] phản hồi: " .. tostring(res))
+                        logActivity("MERCHANT", "Remote [" .. mId .. ", #" .. slot .. "] phản hồi: " .. tostring(res) .. (res2 and (" (" .. tostring(res2) .. ")") or ""))
                     end
                 end
             end)
@@ -1815,7 +1857,7 @@ local function purchaseMerchantSlotViaRemote(merchantObj, slot)
 
             -- Dạng có số lượng: InvokeServer(merchantId, slotIndex, 1)
             pcall(function()
-                local ok, res = pcall(function()
+                local ok, res, res2 = pcall(function()
                     return rf:InvokeServer(mId, slot, 1)
                 end)
                 if ok and (res == true or (type(res) == "table" and (res.Success or res.success))) then
@@ -1829,7 +1871,7 @@ local function purchaseMerchantSlotViaRemote(merchantObj, slot)
         -- Dạng chỉ truyền slot: InvokeServer(slotIndex)
         if not slotPurchased then
             pcall(function()
-                local ok, res = pcall(function()
+                local ok, res, res2 = pcall(function()
                     return rf:InvokeServer(slot)
                 end)
                 if ok and (res == true or (type(res) == "table" and (res.Success or res.success))) then
@@ -1844,7 +1886,7 @@ local function purchaseMerchantSlotViaRemote(merchantObj, slot)
     if not slotPurchased and Network and type(Network.Invoke) == "function" then
         for _, mId in ipairs(merchantNames) do
             pcall(function()
-                local ok, res = pcall(function()
+                local ok, res, res2 = pcall(function()
                     return Network.Invoke("Merchant_RequestPurchase", mId, slot)
                 end)
                 if ok and res ~= nil then
@@ -1852,7 +1894,7 @@ local function purchaseMerchantSlotViaRemote(merchantObj, slot)
                         slotPurchased = true
                         logActivity("MERCHANT", "✅ Network.Invoke: Mua thành công Món #" .. slot .. " (" .. mId .. ")!")
                     else
-                        logActivity("MERCHANT", "Network.Invoke [" .. mId .. ", #" .. slot .. "]: " .. tostring(res))
+                        logActivity("MERCHANT", "Network.Invoke [" .. mId .. ", #" .. slot .. "]: " .. tostring(res) .. (res2 and (" (" .. tostring(res2) .. ")") or ""))
                     end
                 end
             end)
@@ -1886,7 +1928,7 @@ handleTravelingMerchantPurchase = function(merchantObj, padCF)
                 hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                 hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                 hrp.CFrame = standCF
-                if pad and firetouchinterest then
+                if pad and typeof(firetouchinterest) == "function" then
                     pcall(function()
                         firetouchinterest(hrp, pad, 0)
                         task.wait(0.02)
@@ -1916,35 +1958,44 @@ handleTravelingMerchantPurchase = function(merchantObj, padCF)
             end
         end)
 
-        -- Chờ giao diện shop hiển thị (tối đa 2 giây)
+        -- Chờ giao diện shop hiển thị (tối đa 2.5 giây)
         local merchantWin = nil
-        for w = 1, 8 do
+        for w = 1, 10 do
             merchantWin = getMerchantWindow()
             if merchantWin then break end
-            task.wait(0.2)
+            task.wait(0.25)
         end
 
         -- 3. ĐỢT 1: BẤM TRỰC TIẾP CÁC NÚT MUA MÀU XANH TRÊN GIAO DIỆN CỦA SHOP
         -- (Dùng Activated trên đúng nút mua màu xanh có giá tiền, KHÔNG chạm vào icon vật phẩm)
         local totalUiBought = 0
         if merchantWin then
+            logActivity("MERCHANT", "Đã mở cửa sổ shop: " .. merchantWin.Name .. " (" .. merchantWin.AbsoluteSize.X .. "x" .. merchantWin.AbsoluteSize.Y .. ")")
             local greenButtons = findMerchantGreenBuyButtons(merchantWin)
             if #greenButtons > 0 then
-                logActivity("MERCHANT", "Tìm thấy " .. #greenButtons .. " nút mua màu xanh trên shop. Bắt đầu bấm...")
+                logActivity("MERCHANT", "Tìm thấy " .. #greenButtons .. " nút mua trên shop. Bắt đầu bấm...")
                 for idx, item in ipairs(greenButtons) do
                     local btn = item.button
                     local priceStr = item.price
                     logActivity("MERCHANT", "Bấm mua món #" .. idx .. (priceStr ~= "" and (" [" .. priceStr .. "]") or "") .. "...")
                     activateBuyButton(btn)
-                    task.wait(0.12)
+                    task.wait(0.15)
                     -- Kiểm tra nếu game hiện popup Oops! (do thiếu tiền/token) -> tự động đóng ngay
                     dismissOopsPopup()
                     checkAndConfirmPopup()
-                    task.wait(0.08)
+                    task.wait(0.1)
                     totalUiBought = totalUiBought + 1
                 end
             else
-                logActivity("MERCHANT", "Không tìm thấy nút mua màu xanh khả dụng trên shop.")
+                local sampleBtns = {}
+                for _, b in ipairs(merchantWin:GetDescendants()) do
+                    if (b:IsA("TextButton") or b:IsA("ImageButton")) and b.Visible and not isCloseButton(b) then
+                        local pTxt = getButtonPriceText(b)
+                        table.insert(sampleBtns, b.Name .. "(" .. b.ClassName .. ", " .. b.AbsoluteSize.X .. "x" .. b.AbsoluteSize.Y .. (pTxt ~= "" and (", " .. pTxt) or "") .. ")")
+                        if #sampleBtns >= 8 then break end
+                    end
+                end
+                logActivity("MERCHANT", "Không tìm thấy nút mua khả dụng. Buttons trong shop: [" .. table.concat(sampleBtns, ", ") .. "]")
             end
         else
             logActivity("MERCHANT", "Chưa phát hiện cửa sổ shop trên màn hình.")
