@@ -2,20 +2,17 @@
     ========================================================================
     ⚡ PET SIMULATOR 99 - PSX CLASSIC (UPDATE 99) FAST AUTO HATCH & ANTI-AFK
     ========================================================================
-    Phiên bản: V1.1 (Cực kỳ ổn định - Plug & Play cho mọi Executor)
+    Phiên bản: V1.2 (Tối ưu chuyên sâu cho Sự Kiện PSX Classic Update 99)
     Tác giả: Vt47
-    Chức năng chính:
-      - 🥚 Tự động mở trứng siêu tốc (Fast Auto Hatch)
-      - 🚀 Bỏ qua 100% hoạt ảnh đập trứng (Skip Hatch Animation)
-      - 🎯 Tự nhận diện quả trứng người chơi đang đứng gần (Auto Nearest Egg)
-      - 🔢 Tự động tính số lượng mở tối đa (Auto Max Hatch Slots)
-      - 🛡️ Chống văng game 24/7 (Anti-AFK & Auto-Reconnect)
-      - 🔋 Chế độ tiết kiệm pin / Low CPU (Màn đen cắm qua đêm)
-      - 📱 Giao diện hiện đại, kéo thả mượt mà, hỗ trợ cả Mobile & PC
+    Cập nhật:
+      - 🎯 Bổ sung bộ nhận diện trứng thông minh (Bán kính 150 studs + Quét BillboardGui giá tiền 1,000 / 250)
+      - 🎛️ Thêm nút chọn trứng thủ công [ ◀ ] [ Tên Trứng ] [ ▶ ] phòng khi đứng xa
+      - 🚀 Đa giao thức Remote: Eggs_Hatch, Eggs_RequestPurchase, CustomEggs_Hatch, EggCmds
+      - 🛡️ Anti-AFK 24/7 & Auto-Reconnect chống văng game
     ========================================================================
 ]]
 
--- Đợi game tải xong hoàn toàn
+-- Đợi game tải xong
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
@@ -37,16 +34,34 @@ while not Player do
     Player = Players.LocalPlayer
 end
 
-pcall(function()
-    StarterGui:SetCore("SendNotification", {
-        Title = "⚡ PS99 PSX Classic",
-        Text = "Đang tải giao diện mở trứng...",
-        Duration = 3
-    })
-end)
+-- Danh sách các loại trứng phổ biến trong sự kiện PSX Classic (Update 99)
+local PSX_CLASSIC_EGGS = {
+    "Spotted Egg",
+    "Cracked Egg",
+    "Wood Egg",
+    "Grass Egg",
+    "Beach Egg",
+    "Coconut Egg",
+    "Rock Egg",
+    "Geode Egg",
+    "Snow Egg",
+    "Frost Egg",
+    "Ice Egg",
+    "Glacier Egg",
+    "Desert Egg",
+    "Sand Egg",
+    "Volcano Egg",
+    "Obsidian Egg",
+    "Heavens Gate Egg",
+    "Golden Spotted Egg",
+    "Golden Cracked Egg",
+    "Golden Wood Egg",
+    "Golden Grass Egg",
+    "Golden Beach Egg"
+}
 
 --========================================================================
--- 1. TÌM NƠI CHỨA GUI AN TOÀN CHO MỌI EXECUTOR (DELTA, CODEX, ARCEUS, PC)
+-- 1. NƠI CHỨA GUI AN TOÀN CHO MỌI EXECUTOR
 --========================================================================
 local function getSafeGuiParent()
     if typeof(gethui) == "function" then
@@ -67,7 +82,6 @@ end
 
 local GuiParent = getSafeGuiParent()
 
--- Xoá GUI cũ nếu đang chạy để không bị trùng lặp
 pcall(function()
     local oldList = {}
     if typeof(gethui) == "function" then
@@ -76,13 +90,11 @@ pcall(function()
     end
     if CoreGui and CoreGui:FindFirstChild("PS99_PSXClassic_FastHatch") then table.insert(oldList, CoreGui.PS99_PSXClassic_FastHatch) end
     if Player:FindFirstChild("PlayerGui") and Player.PlayerGui:FindFirstChild("PS99_PSXClassic_FastHatch") then table.insert(oldList, Player.PlayerGui.PS99_PSXClassic_FastHatch) end
-    for _, g in ipairs(oldList) do
-        g:Destroy()
-    end
+    for _, g in ipairs(oldList) do g:Destroy() end
 end)
 
 --========================================================================
--- 2. TÌM VÀ REQUIRE CÁC MODULE CỦA PET SIMULATOR 99
+-- 2. TÌM MODULE CỦA PET SIMULATOR 99
 --========================================================================
 local Library, Client, Directory, Save, EggCmds, Network
 
@@ -98,12 +110,10 @@ pcall(function()
         end
     end
 end)
-if not Network and RS:FindFirstChild("Network") then
-    Network = RS.Network
-end
+if not Network and RS:FindFirstChild("Network") then Network = RS.Network end
 
 --========================================================================
--- 3. CẤU HÌNH & TRẠNG THÁI (STATE)
+-- 3. STATE
 --========================================================================
 local STATE = {
     AutoHatch = false,
@@ -111,16 +121,16 @@ local STATE = {
     AutoMaxHatch = true,
     CustomHatchAmount = 1,
     LowCpuMode = false,
-    CurrentEggName = "Đang tìm trứng gần nhất...",
+    CurrentEggName = "Spotted Egg",
     CurrentEggObj = nil,
     IsCustomEgg = false,
     TotalHatched = 0,
-    HatchSpeed = 0.08, -- Tốc độ gọi mở trứng (giây)
-    StartTime = os.time(),
+    HatchSpeed = 0.08,
+    EggIndex = 1,
 }
 
 --========================================================================
--- 4. HÀM TÍNH SỐ LƯỢNG MỞ TỐI ĐA (MAX HATCH SLOTS)
+-- 4. HÀM TÍNH MAX HATCH SLOTS
 --========================================================================
 local function getMaxHatch()
     local maxAmt = nil
@@ -235,143 +245,197 @@ local function autoDismissModals()
 end
 
 --========================================================================
--- 6. QUÉT VÀ NHẬN DIỆN TRỨNG GẦN NHẤT
+-- 6. THUẬT TOÁN QUÉT VÀ NHẬN DIỆN TRỨNG THÔNG MINH (MULTI-STRATEGY)
 --========================================================================
 local function getNearestEgg()
     local char = Player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil, nil, 9999, false end
+    if not hrp then return nil, STATE.CurrentEggName or "Spotted Egg", 9999, false end
 
-    local Things = workspace:FindFirstChild("__THINGS")
-    local bestEgg, bestEggId, bestDist, isCustom = nil, nil, 60, false
+    local bestEgg, bestEggId, bestDist, isCustom = nil, nil, 150, false
 
-    local function checkEgg(egg, customFlag)
-        if not egg then return end
-        local part = egg:IsA("BasePart") and egg or egg:FindFirstChildWhichIsA("BasePart", true)
-        if not part and egg:IsA("Model") then
-            pcall(function()
-                local piv = egg:GetPivot()
-                if piv then
-                    local d = (piv.Position - hrp.Position).Magnitude
-                    if d < bestDist then
-                        bestDist = d
-                        bestEgg = egg
-                        local attrId = egg:GetAttribute("DM_EggId") or egg:GetAttribute("EggId")
-                        bestEggId = (attrId and tostring(attrId)) or egg.Name
-                        isCustom = customFlag
-                    end
-                end
-            end)
-            return
+    local function testTarget(obj, id, customFlag)
+        if not obj then return end
+        local pos = nil
+        if obj:IsA("BasePart") then
+            pos = obj.Position
+        elseif obj:IsA("Model") then
+            local p = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
+            if p then
+                pos = p.Position
+            else
+                local ok, piv = pcall(function() return obj:GetPivot().Position end)
+                if ok and piv then pos = piv end
+            end
+        elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
+            local adornee = obj.Adornee or obj.Parent
+            if adornee and adornee:IsA("BasePart") then pos = adornee.Position end
         end
-        if part then
-            local d = (part.Position - hrp.Position).Magnitude
+
+        if pos then
+            local d = (pos - hrp.Position).Magnitude
             if d < bestDist then
                 bestDist = d
-                bestEgg = egg
-                local attrId = egg:GetAttribute("DM_EggId") or egg:GetAttribute("EggId")
-                bestEggId = (attrId and tostring(attrId)) or egg.Name
-                isCustom = customFlag
+                bestEgg = obj
+                local attrId = obj:GetAttribute("EggId") or obj:GetAttribute("DM_EggId")
+                bestEggId = id or (attrId and tostring(attrId)) or obj.Name
+                isCustom = customFlag or false
             end
         end
     end
 
+    -- 1. Quét trong __THINGS
+    local Things = workspace:FindFirstChild("__THINGS")
     if Things then
-        local EggsFolder = Things:FindFirstChild("Eggs")
-        if EggsFolder then
-            for _, egg in pairs(EggsFolder:GetChildren()) do checkEgg(egg, false) end
-        end
-        local CustomEggsFolder = Things:FindFirstChild("CustomEggs")
-        if CustomEggsFolder then
-            for _, egg in pairs(CustomEggsFolder:GetChildren()) do checkEgg(egg, true) end
+        for _, fName in ipairs({"Eggs", "CustomEggs", "ClassicEggs", "EventEggs", "Instances"}) do
+            local folder = Things:FindFirstChild(fName)
+            if folder then
+                for _, item in pairs(folder:GetChildren()) do
+                    testTarget(item, nil, fName == "CustomEggs")
+                end
+            end
         end
     end
 
-    if not bestEgg then
-        for _, obj in pairs(workspace:GetChildren()) do
-            if obj.Name == "Eggs" or obj.Name == "CustomEggs" then
-                for _, egg in pairs(obj:GetChildren()) do checkEgg(egg, false) end
+    -- 2. Quét trong Map
+    local Map = workspace:FindFirstChild("Map")
+    if Map then
+        for _, area in pairs(Map:GetChildren()) do
+            local eFolder = area:FindFirstChild("Eggs") or area:FindFirstChild("Egg")
+            if eFolder then
+                for _, item in pairs(eFolder:GetChildren()) do testTarget(item, nil, false) end
+            end
+            for _, item in pairs(area:GetChildren()) do
+                if string.find(string.lower(item.Name), "egg") then testTarget(item, nil, false) end
             end
         end
+    end
+
+    -- 3. Quét trực tiếp các Model chứa chữ "Egg" trong workspace
+    pcall(function()
+        for _, item in pairs(workspace:GetChildren()) do
+            local lName = string.lower(item.Name)
+            if string.find(lName, "egg") or lName == "eggs" or lName == "customeggs" then
+                if item:IsA("Folder") or item:IsA("Model") then
+                    for _, sub in pairs(item:GetChildren()) do testTarget(sub, nil, false) end
+                end
+                testTarget(item, nil, false)
+            end
+        end
+    end)
+
+    -- 4. Quét BillboardGui / Price Tag giá tiền đứng sát người chơi (nhận diện "1,000" -> Spotted Egg, "250" -> Cracked Egg)
+    pcall(function()
+        for _, gui in pairs(workspace:GetDescendants()) do
+            if gui:IsA("BillboardGui") and gui.Enabled then
+                local part = gui.Adornee or gui.Parent
+                if part and part:IsA("BasePart") then
+                    local d = (part.Position - hrp.Position).Magnitude
+                    if d < 45 then
+                        for _, textObj in pairs(gui:GetDescendants()) do
+                            if textObj:IsA("TextLabel") and textObj.Visible then
+                                local txt = textObj.Text
+                                if string.find(txt, "1,000") or string.find(string.lower(txt), "spotted") then
+                                    bestEgg = part.Parent or part
+                                    bestEggId = "Spotted Egg"
+                                    bestDist = d
+                                    return
+                                elseif string.find(txt, "250") or string.find(string.lower(txt), "cracked") then
+                                    bestEgg = part.Parent or part
+                                    bestEggId = "Cracked Egg"
+                                    bestDist = d
+                                    return
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    if not bestEggId then
+        bestEggId = STATE.CurrentEggName or "Spotted Egg"
     end
 
     return bestEgg, bestEggId, bestDist, isCustom
 end
 
 --========================================================================
--- 7. HÀM THỰC THI MỞ TRỨNG
+-- 7. THỰC THI MỞ TRỨNG ĐA GIAO THỨC (MULTI-PROTOCOL HATCH)
 --========================================================================
 local function hatchEgg(eggObj, eggId, amount, isCustom)
     local amt = tonumber(amount) or 1
-    local id = tostring(eggId)
     local success = false
 
+    local candidateNames = {}
+    if eggId and tostring(eggId) ~= "" then
+        table.insert(candidateNames, tostring(eggId))
+        local stripped = string.gsub(tostring(eggId), " Egg$", "")
+        if stripped ~= tostring(eggId) then table.insert(candidateNames, stripped) end
+    end
+    if eggObj and eggObj.Name and eggObj.Name ~= eggId then
+        table.insert(candidateNames, eggObj.Name)
+    end
+    if eggId == "Spotted Egg" then
+        table.insert(candidateNames, "2 - Spotted Egg")
+        table.insert(candidateNames, "2")
+        table.insert(candidateNames, "Spotted")
+    elseif eggId == "Cracked Egg" then
+        table.insert(candidateNames, "1 - Cracked Egg")
+        table.insert(candidateNames, "1")
+        table.insert(candidateNames, "Cracked")
+    end
+
+    -- Giao thức 1: Network.Invoke
     if Network and typeof(Network.Invoke) == "function" then
-        if isCustom then
-            pcall(function()
-                local res = Network.Invoke("CustomEggs_Hatch", eggObj and eggObj.Name or id, amt)
-                if res ~= nil then success = true end
-            end)
-            if not success and id then
+        for _, name in ipairs(candidateNames) do
+            for _, remName in ipairs({"Eggs_Hatch", "Eggs_RequestPurchase", "CustomEggs_Hatch", "ClassicEggs_Hatch"}) do
                 pcall(function()
-                    local res = Network.Invoke("CustomEggs_Hatch", id, amt)
+                    local res = Network.Invoke(remName, name, amt)
                     if res ~= nil then success = true end
                 end)
+                if success then break end
             end
-            if not success and id then
-                pcall(function()
-                    local res = Network.Invoke("Eggs_RequestPurchase", id, amt)
-                    if res ~= nil then success = true end
-                end)
-            end
-        else
-            pcall(function()
-                local res = Network.Invoke("Eggs_RequestPurchase", id, amt)
-                if res ~= nil then success = true end
-            end)
-            if not success and eggObj and eggObj.Name then
-                pcall(function()
-                    local res = Network.Invoke("Eggs_RequestPurchase", eggObj.Name, amt)
-                    if res ~= nil then success = true end
-                end)
-            end
-            if not success then
-                pcall(function()
-                    local res = Network.Invoke("CustomEggs_Hatch", id, amt)
-                    if res ~= nil then success = true end
-                end)
+            if success then break end
+        end
+    end
+
+    -- Giao thức 2: RemoteFunction trong RS.Network
+    local netFolder = RS:FindFirstChild("Network")
+    if netFolder then
+        for _, rem in pairs(netFolder:GetChildren()) do
+            local lName = string.lower(rem.Name)
+            if rem:IsA("RemoteFunction") and (string.find(lName, "egg") or string.find(lName, "hatch") or string.find(lName, "purchase")) then
+                for _, name in ipairs(candidateNames) do
+                    pcall(function()
+                        rem:InvokeServer(name, amt)
+                        success = true
+                    end)
+                end
+            elseif rem:IsA("RemoteEvent") and (string.find(lName, "egg") or string.find(lName, "hatch")) then
+                for _, name in ipairs(candidateNames) do
+                    pcall(function()
+                        rem:FireServer(name, amt)
+                        success = true
+                    end)
+                end
             end
         end
     end
 
-    if not success then
-        local netFolder = RS:FindFirstChild("Network")
-        if netFolder then
-            local rfEggs = netFolder:FindFirstChild("Eggs_RequestPurchase")
-            local rfCustom = netFolder:FindFirstChild("CustomEggs_Hatch")
-
-            if isCustom and rfCustom then
-                pcall(function() rfCustom:InvokeServer(eggObj and eggObj.Name or id, amt) success = true end)
-            elseif rfEggs then
-                pcall(function() rfEggs:InvokeServer(id, amt) success = true end)
-            end
-            if not success and rfCustom then
-                pcall(function() rfCustom:InvokeServer(id, amt) success = true end)
-            end
-            if not success and rfEggs then
-                pcall(function() rfEggs:InvokeServer(id, amt) success = true end)
-            end
+    -- Giao thức 3: EggCmds module
+    if EggCmds and typeof(EggCmds) == "table" then
+        for _, name in ipairs(candidateNames) do
+            pcall(function()
+                if EggCmds.Hatch then EggCmds.Hatch(name, amt) success = true
+                elseif EggCmds.Purchase then EggCmds.Purchase(name, amt) success = true end
+            end)
         end
     end
 
-    if not success and EggCmds and typeof(EggCmds) == "table" then
-        pcall(function()
-            if EggCmds.Hatch then EggCmds.Hatch(id, amt) success = true
-            elseif EggCmds.Purchase then EggCmds.Purchase(id, amt) success = true end
-        end)
-    end
-
-    if not success and eggObj then
+    -- Giao thức 4: ProximityPrompt
+    if eggObj then
         pcall(function()
             for _, prompt in pairs(eggObj:GetDescendants()) do
                 if prompt:IsA("ProximityPrompt") and prompt.Enabled and fireproximityprompt then
@@ -387,7 +451,7 @@ local function hatchEgg(eggObj, eggId, amount, isCustom)
 end
 
 --========================================================================
--- 8. TẠO GIAO DIỆN ĐIỀU KHIỂN (UI)
+-- 8. GIAO DIỆN ĐIỀU KHIỂN (UI)
 --========================================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "PS99_PSXClassic_FastHatch"
@@ -403,8 +467,8 @@ ScreenGui.Parent = GuiParent
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 320, 0, 360)
-MainFrame.Position = UDim2.new(0.5, -160, 0.25, 0)
+MainFrame.Size = UDim2.new(0, 320, 0, 390)
+MainFrame.Position = UDim2.new(0.5, -160, 0.22, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = true
@@ -519,18 +583,19 @@ FloatingBtn.Activated:Connect(function()
 end)
 
 local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, -20, 1, -52)
-Content.Position = UDim2.new(0, 10, 0, 48)
+Content.Size = UDim2.new(1, -20, 1, -50)
+Content.Position = UDim2.new(0, 10, 0, 46)
 Content.BackgroundTransparency = 1
 Content.Parent = MainFrame
 
 local ContentLayout = Instance.new("UIListLayout")
 ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
-ContentLayout.Padding = UDim.new(0, 7)
+ContentLayout.Padding = UDim.new(0, 6)
 ContentLayout.Parent = Content
 
+-- CARD THÔNG TIN TRỨNG & TRẠNG THÁI
 local InfoCard = Instance.new("Frame")
-InfoCard.Size = UDim2.new(1, 0, 0, 68)
+InfoCard.Size = UDim2.new(1, 0, 0, 64)
 InfoCard.BackgroundColor3 = Color3.fromRGB(26, 32, 48)
 InfoCard.LayoutOrder = 1
 InfoCard.Parent = Content
@@ -540,10 +605,10 @@ InfoCorner.CornerRadius = UDim.new(0, 8)
 InfoCorner.Parent = InfoCard
 
 local lblEggTitle = Instance.new("TextLabel")
-lblEggTitle.Size = UDim2.new(1, -16, 0, 16)
-lblEggTitle.Position = UDim2.new(0, 8, 0, 6)
+lblEggTitle.Size = UDim2.new(1, -16, 0, 15)
+lblEggTitle.Position = UDim2.new(0, 8, 0, 5)
 lblEggTitle.BackgroundTransparency = 1
-lblEggTitle.Text = "🎯 Trứng Đang Đứng Cạnh:"
+lblEggTitle.Text = "🎯 Quả Trứng Đang Chọn:"
 lblEggTitle.TextColor3 = Color3.fromRGB(160, 175, 205)
 lblEggTitle.Font = Enum.Font.GothamMedium
 lblEggTitle.TextSize = 10
@@ -552,18 +617,18 @@ lblEggTitle.Parent = InfoCard
 
 local lblCurrentEgg = Instance.new("TextLabel")
 lblCurrentEgg.Size = UDim2.new(1, -16, 0, 20)
-lblCurrentEgg.Position = UDim2.new(0, 8, 0, 22)
+lblCurrentEgg.Position = UDim2.new(0, 8, 0, 20)
 lblCurrentEgg.BackgroundTransparency = 1
-lblCurrentEgg.Text = "Đang tìm kiếm..."
-lblCurrentEgg.TextColor3 = Color3.fromRGB(255, 220, 80)
+lblCurrentEgg.Text = "🥚 Spotted Egg"
+lblCurrentEgg.TextColor3 = Color3.fromRGB(80, 220, 140)
 lblCurrentEgg.Font = Enum.Font.GothamBold
 lblCurrentEgg.TextSize = 13
 lblCurrentEgg.TextXAlignment = Enum.TextXAlignment.Left
 lblCurrentEgg.Parent = InfoCard
 
 local lblHatchedCount = Instance.new("TextLabel")
-lblHatchedCount.Size = UDim2.new(1, -16, 0, 16)
-lblHatchedCount.Position = UDim2.new(0, 8, 0, 46)
+lblHatchedCount.Size = UDim2.new(1, -16, 0, 15)
+lblHatchedCount.Position = UDim2.new(0, 8, 0, 43)
 lblHatchedCount.BackgroundTransparency = 1
 lblHatchedCount.Text = "📦 Đã mở: 0 quả  •  🛡️ Anti-AFK: ✅ BẬT"
 lblHatchedCount.TextColor3 = Color3.fromRGB(120, 230, 140)
@@ -572,6 +637,68 @@ lblHatchedCount.TextSize = 10
 lblHatchedCount.TextXAlignment = Enum.TextXAlignment.Left
 lblHatchedCount.Parent = InfoCard
 
+-- BỘ CHỌN TRỨNG THỦ CÔNG & QUÉT TỰ ĐỘNG
+local SelectorRow = Instance.new("Frame")
+SelectorRow.Size = UDim2.new(1, 0, 0, 32)
+SelectorRow.BackgroundColor3 = Color3.fromRGB(24, 28, 42)
+SelectorRow.LayoutOrder = 2
+SelectorRow.Parent = Content
+
+local SelectCorner = Instance.new("UICorner")
+SelectCorner.CornerRadius = UDim.new(0, 8)
+SelectCorner.Parent = SelectorRow
+
+local btnPrevEgg = Instance.new("TextButton")
+btnPrevEgg.Size = UDim2.new(0, 32, 1, 0)
+btnPrevEgg.Position = UDim2.new(0, 0, 0, 0)
+btnPrevEgg.BackgroundColor3 = Color3.fromRGB(36, 44, 68)
+btnPrevEgg.Text = "◀"
+btnPrevEgg.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnPrevEgg.Font = Enum.Font.GothamBold
+btnPrevEgg.TextSize = 11
+btnPrevEgg.Parent = SelectorRow
+
+local btnNextEgg = Instance.new("TextButton")
+btnNextEgg.Size = UDim2.new(0, 32, 1, 0)
+btnNextEgg.Position = UDim2.new(1, -32, 0, 0)
+btnNextEgg.BackgroundColor3 = Color3.fromRGB(36, 44, 68)
+btnNextEgg.Text = "▶"
+btnNextEgg.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnNextEgg.Font = Enum.Font.GothamBold
+btnNextEgg.TextSize = 11
+btnNextEgg.Parent = SelectorRow
+
+local lblSelectName = Instance.new("TextLabel")
+lblSelectName.Size = UDim2.new(1, -68, 1, 0)
+lblSelectName.Position = UDim2.new(0, 34, 0, 0)
+lblSelectName.BackgroundTransparency = 1
+lblSelectName.Text = "Spotted Egg"
+lblSelectName.TextColor3 = Color3.fromRGB(255, 220, 80)
+lblSelectName.Font = Enum.Font.GothamMedium
+lblSelectName.TextSize = 11
+lblSelectName.Parent = SelectorRow
+
+local function updateSelectedEggDisplay()
+    local name = PSX_CLASSIC_EGGS[STATE.EggIndex] or "Spotted Egg"
+    STATE.CurrentEggName = name
+    lblSelectName.Text = name
+    lblCurrentEgg.Text = "🥚 " .. name
+    lblCurrentEgg.TextColor3 = Color3.fromRGB(80, 220, 140)
+end
+
+btnPrevEgg.Activated:Connect(function()
+    STATE.EggIndex = STATE.EggIndex - 1
+    if STATE.EggIndex < 1 then STATE.EggIndex = #PSX_CLASSIC_EGGS end
+    updateSelectedEggDisplay()
+end)
+
+btnNextEgg.Activated:Connect(function()
+    STATE.EggIndex = STATE.EggIndex + 1
+    if STATE.EggIndex > #PSX_CLASSIC_EGGS then STATE.EggIndex = 1 end
+    updateSelectedEggDisplay()
+end)
+
+-- NÚT BẬT / TẮT AUTO MỞ TRỨNG
 local btnToggleHatch = Instance.new("TextButton")
 btnToggleHatch.Size = UDim2.new(1, 0, 0, 42)
 btnToggleHatch.BackgroundColor3 = Color3.fromRGB(40, 170, 80)
@@ -579,7 +706,7 @@ btnToggleHatch.Text = "▶️ BẬT AUTO MỞ TRỨNG"
 btnToggleHatch.TextColor3 = Color3.fromRGB(255, 255, 255)
 btnToggleHatch.Font = Enum.Font.GothamBold
 btnToggleHatch.TextSize = 13
-btnToggleHatch.LayoutOrder = 2
+btnToggleHatch.LayoutOrder = 3
 btnToggleHatch.Parent = Content
 
 local btnHatchCorner = Instance.new("UICorner")
@@ -591,6 +718,13 @@ btnToggleHatch.Activated:Connect(function()
     if STATE.AutoHatch then
         btnToggleHatch.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
         btnToggleHatch.Text = "🛑 DỪNG AUTO MỞ TRỨNG"
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "⚡ PS99 Fast Hatch",
+                Text = "Đang mở trứng: " .. tostring(STATE.CurrentEggName),
+                Duration = 2
+            })
+        end)
     else
         btnToggleHatch.BackgroundColor3 = Color3.fromRGB(40, 170, 80)
         btnToggleHatch.Text = "▶️ BẬT AUTO MỞ TRỨNG"
@@ -599,7 +733,7 @@ end)
 
 local function createToggleRow(order, title, initialVal, onToggle)
     local Row = Instance.new("Frame")
-    Row.Size = UDim2.new(1, 0, 0, 34)
+    Row.Size = UDim2.new(1, 0, 0, 32)
     Row.BackgroundColor3 = Color3.fromRGB(24, 28, 42)
     Row.LayoutOrder = order
     Row.Parent = Content
@@ -643,17 +777,17 @@ local function createToggleRow(order, title, initialVal, onToggle)
     return Row
 end
 
-createToggleRow(3, "🚀 Bỏ qua Hoạt Ảnh (Mở Siêu Tốc)", STATE.SkipAnimation, function(val)
+createToggleRow(4, "🚀 Bỏ qua Hoạt Ảnh (Mở Siêu Tốc)", STATE.SkipAnimation, function(val)
     STATE.SkipAnimation = val
     if val then disableEggAnimations() end
 end)
 
-createToggleRow(4, "🔢 Tự Động Mở Max Trứng (Max Slots)", STATE.AutoMaxHatch, function(val)
+createToggleRow(5, "🔢 Tự Động Mở Max Trứng (Max Slots)", STATE.AutoMaxHatch, function(val)
     STATE.AutoMaxHatch = val
 end)
 
 local BlackScreenGui = nil
-createToggleRow(5, "🔋 Chế Độ Màn Đen (Tiết Kiệm Pin / CPU)", STATE.LowCpuMode, function(val)
+createToggleRow(6, "🔋 Chế Độ Màn Đen (Tiết Kiệm Pin / CPU)", STATE.LowCpuMode, function(val)
     STATE.LowCpuMode = val
     if val then
         if not BlackScreenGui then
@@ -745,27 +879,32 @@ end)
 --========================================================================
 -- 10. VÒNG LẶP CHÍNH (QUÉT TRỨNG & MỞ LIÊN TỤC)
 --========================================================================
+
+-- Quét nhận diện trứng tự động
 task.spawn(function()
     while true do
-        task.wait(0.5)
+        task.wait(0.8)
         pcall(function()
             local eggObj, eggId, dist, isCustom = getNearestEgg()
-            if eggObj and dist <= 45 then
+            if eggObj and dist <= 120 then
                 STATE.CurrentEggObj = eggObj
-                STATE.CurrentEggName = eggId or eggObj.Name
+                if eggId and eggId ~= "" then
+                    STATE.CurrentEggName = eggId
+                    lblSelectName.Text = eggId
+                    lblCurrentEgg.Text = string.format("🥚 %s (%.0fm)", tostring(eggId), dist)
+                    lblCurrentEgg.TextColor3 = Color3.fromRGB(80, 220, 140)
+                end
                 STATE.IsCustomEgg = isCustom
-                lblCurrentEgg.Text = string.format("🥚 %s (%.0fm)", tostring(STATE.CurrentEggName), dist)
+            elseif not STATE.CurrentEggName then
+                STATE.CurrentEggName = "Spotted Egg"
+                lblCurrentEgg.Text = "🥚 Spotted Egg"
                 lblCurrentEgg.TextColor3 = Color3.fromRGB(80, 220, 140)
-            else
-                STATE.CurrentEggObj = nil
-                STATE.CurrentEggName = nil
-                lblCurrentEgg.Text = "❌ Đứng gần quả trứng để mở"
-                lblCurrentEgg.TextColor3 = Color3.fromRGB(240, 140, 80)
             end
         end)
     end
 end)
 
+-- Bỏ qua hoạt ảnh liên tục
 task.spawn(function()
     while true do
         task.wait(0.2)
@@ -776,22 +915,21 @@ task.spawn(function()
     end
 end)
 
+-- VÒNG LẶP MỞ TRỨNG SIÊU TỐC
 task.spawn(function()
     while true do
         task.wait(STATE.HatchSpeed)
         if STATE.AutoHatch then
             pcall(function()
-                if STATE.CurrentEggObj or STATE.CurrentEggName then
-                    local eggObj = STATE.CurrentEggObj
-                    local eggName = STATE.CurrentEggName
-                    local isCustom = STATE.IsCustomEgg
-                    local hatchAmt = STATE.AutoMaxHatch and getMaxHatch() or (tonumber(STATE.CustomHatchAmount) or 1)
+                local eggObj = STATE.CurrentEggObj
+                local eggName = STATE.CurrentEggName or "Spotted Egg"
+                local isCustom = STATE.IsCustomEgg
+                local hatchAmt = STATE.AutoMaxHatch and getMaxHatch() or (tonumber(STATE.CustomHatchAmount) or 1)
 
-                    local ok = hatchEgg(eggObj, eggName, hatchAmt, isCustom)
-                    if ok then
-                        STATE.TotalHatched = STATE.TotalHatched + hatchAmt
-                        lblHatchedCount.Text = string.format("📦 Đã mở: %d quả  •  🛡️ Anti-AFK: ✅ BẬT", STATE.TotalHatched)
-                    end
+                local ok = hatchEgg(eggObj, eggName, hatchAmt, isCustom)
+                if ok then
+                    STATE.TotalHatched = STATE.TotalHatched + hatchAmt
+                    lblHatchedCount.Text = string.format("📦 Đã mở: %d quả  •  🛡️ Anti-AFK: ✅ BẬT", STATE.TotalHatched)
                 end
             end)
         end
@@ -800,9 +938,9 @@ end)
 
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "⚡ PS99 PSX Classic Ready",
-        Text = "Menu đã sẵn sàng! Đứng gần trứng và bấm BẬT.",
+        Title = "⚡ PS99 PSX Classic V1.2",
+        Text = "Đã cập nhật bộ nhận diện trứng & nút chọn nhanh!",
         Duration = 3
     })
 end)
-print("[PS99 Script] PSX Classic Fast Auto Hatch & Anti-AFK V1.1 loaded successfully!")
+print("[PS99 Script] PSX Classic Fast Auto Hatch V1.2 loaded successfully!")
