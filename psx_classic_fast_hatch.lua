@@ -2,7 +2,7 @@
     ========================================================================
     ⚡ PET SIMULATOR 99 - PSX CLASSIC (UPDATE 99) FAST AUTO HATCH & ANTI-AFK
     ========================================================================
-    Phiên bản: V1.0 (Chuyên dụng cho UPDATE 99: PSX Classic Event & Main Game)
+    Phiên bản: V1.1 (Cực kỳ ổn định - Plug & Play cho mọi Executor)
     Tác giả: Vt47
     Chức năng chính:
       - 🥚 Tự động mở trứng siêu tốc (Fast Auto Hatch)
@@ -15,20 +15,74 @@
     ========================================================================
 ]]
 
+-- Đợi game tải xong hoàn toàn
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local VirtualUser = game:GetService("VirtualUser")
+local VirtualUser = nil
+pcall(function() VirtualUser = game:GetService("VirtualUser") end)
 local GuiService = game:GetService("GuiService")
 local TeleportService = game:GetService("TeleportService")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 
-local Player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local Player = Players.LocalPlayer
+while not Player do
+    task.wait(0.1)
+    Player = Players.LocalPlayer
+end
+
+pcall(function()
+    StarterGui:SetCore("SendNotification", {
+        Title = "⚡ PS99 PSX Classic",
+        Text = "Đang tải giao diện mở trứng...",
+        Duration = 3
+    })
+end)
 
 --========================================================================
--- 1. TÌM VÀ REQUIRE CÁC MODULE CỦA PET SIMULATOR 99
+-- 1. TÌM NƠI CHỨA GUI AN TOÀN CHO MỌI EXECUTOR (DELTA, CODEX, ARCEUS, PC)
+--========================================================================
+local function getSafeGuiParent()
+    if typeof(gethui) == "function" then
+        local ok, h = pcall(gethui)
+        if ok and h then return h end
+    end
+    local ok, core = pcall(function() return CoreGui end)
+    if ok and core then
+        local canWrite = pcall(function()
+            local t = Instance.new("Folder")
+            t.Parent = core
+            t:Destroy()
+        end)
+        if canWrite then return core end
+    end
+    return Player:WaitForChild("PlayerGui", 5) or Player:FindFirstChild("PlayerGui")
+end
+
+local GuiParent = getSafeGuiParent()
+
+-- Xoá GUI cũ nếu đang chạy để không bị trùng lặp
+pcall(function()
+    local oldList = {}
+    if typeof(gethui) == "function" then
+        local ok, h = pcall(gethui)
+        if ok and h and h:FindFirstChild("PS99_PSXClassic_FastHatch") then table.insert(oldList, h.PS99_PSXClassic_FastHatch) end
+    end
+    if CoreGui and CoreGui:FindFirstChild("PS99_PSXClassic_FastHatch") then table.insert(oldList, CoreGui.PS99_PSXClassic_FastHatch) end
+    if Player:FindFirstChild("PlayerGui") and Player.PlayerGui:FindFirstChild("PS99_PSXClassic_FastHatch") then table.insert(oldList, Player.PlayerGui.PS99_PSXClassic_FastHatch) end
+    for _, g in ipairs(oldList) do
+        g:Destroy()
+    end
+end)
+
+--========================================================================
+-- 2. TÌM VÀ REQUIRE CÁC MODULE CỦA PET SIMULATOR 99
 --========================================================================
 local Library, Client, Directory, Save, EggCmds, Network
 
@@ -49,7 +103,7 @@ if not Network and RS:FindFirstChild("Network") then
 end
 
 --========================================================================
--- 2. CẤU HÌNH & TRẠNG THÁI (STATE)
+-- 3. CẤU HÌNH & TRẠNG THÁI (STATE)
 --========================================================================
 local STATE = {
     AutoHatch = false,
@@ -61,22 +115,20 @@ local STATE = {
     CurrentEggObj = nil,
     IsCustomEgg = false,
     TotalHatched = 0,
-    HatchSpeed = 0.08, -- Thời gian chờ mỗi lần gọi mở trứng (giây)
+    HatchSpeed = 0.08, -- Tốc độ gọi mở trứng (giây)
     StartTime = os.time(),
 }
 
 --========================================================================
--- 3. HÀM TÍNH SỐ LƯỢNG MỞ TỐI ĐA (MAX HATCH SLOTS)
+-- 4. HÀM TÍNH SỐ LƯỢNG MỞ TỐI ĐA (MAX HATCH SLOTS)
 --========================================================================
 local function getMaxHatch()
     local maxAmt = nil
-    -- Cách 1: EggCmds.GetMaxHatch()
     pcall(function()
         if EggCmds and typeof(EggCmds.GetMaxHatch) == "function" then
             maxAmt = tonumber(EggCmds.GetMaxHatch())
         end
     end)
-    -- Cách 2: Save Data
     pcall(function()
         if Save and Save.Get then
             local s = Save.Get()
@@ -97,10 +149,9 @@ local function getMaxHatch()
 end
 
 --========================================================================
--- 4. BỎ QUA HOẠT ẢNH MỞ TRỨNG (SKIP ANIMATION)
+-- 5. BỎ QUA HOẠT ẢNH MỞ TRỨNG (SKIP ANIMATION)
 --========================================================================
 local function disableEggAnimations()
-    -- Ghi đè hàm trong EggCmds
     pcall(function()
         if EggCmds and typeof(EggCmds) == "table" then
             if EggCmds.PlayEggAnimation then EggCmds.PlayEggAnimation = function(...) return end end
@@ -108,7 +159,6 @@ local function disableEggAnimations()
         end
     end)
 
-    -- Ghi đè hàm trong PlayerScripts qua getsenv (nếu executor hỗ trợ)
     pcall(function()
         if typeof(getsenv) == "function" then
             local scriptsFolder = Player:FindFirstChild("PlayerScripts") and Player.PlayerScripts:FindFirstChild("Scripts")
@@ -127,7 +177,6 @@ local function disableEggAnimations()
         end
     end)
 
-    -- Đóng các ScreenGui Cutscene đập trứng
     pcall(function()
         local pg = Player:FindFirstChild("PlayerGui")
         if pg then
@@ -140,7 +189,6 @@ local function disableEggAnimations()
         end
     end)
 
-    -- Khôi phục góc quay Camera mặc định nếu bị khoá vào quả trứng
     pcall(function()
         local cam = workspace.CurrentCamera
         if cam and cam.CameraType ~= Enum.CameraType.Custom then
@@ -152,7 +200,6 @@ local function disableEggAnimations()
     end)
 end
 
--- Đóng popup xác nhận không cần thiết (Ok, Continue) để việc mở không bị gián đoạn
 local function autoDismissModals()
     pcall(function()
         local pg = Player:FindFirstChild("PlayerGui")
@@ -188,7 +235,7 @@ local function autoDismissModals()
 end
 
 --========================================================================
--- 5. QUÉT VÀ NHẬN DIỆN TRỨNG GẦN NHẤT (PSX CLASSIC & MAIN GAME)
+-- 6. QUÉT VÀ NHẬN DIỆN TRỨNG GẦN NHẤT
 --========================================================================
 local function getNearestEgg()
     local char = Player.Character
@@ -230,30 +277,20 @@ local function getNearestEgg()
     end
 
     if Things then
-        -- 1. Quét workspace.__THINGS.Eggs (Trứng thường / PSX Classic Event)
         local EggsFolder = Things:FindFirstChild("Eggs")
         if EggsFolder then
-            for _, egg in pairs(EggsFolder:GetChildren()) do
-                checkEgg(egg, false)
-            end
+            for _, egg in pairs(EggsFolder:GetChildren()) do checkEgg(egg, false) end
         end
-
-        -- 2. Quét workspace.__THINGS.CustomEggs (Trứng Event, Diamond Mountain, v.v.)
         local CustomEggsFolder = Things:FindFirstChild("CustomEggs")
         if CustomEggsFolder then
-            for _, egg in pairs(CustomEggsFolder:GetChildren()) do
-                checkEgg(egg, true)
-            end
+            for _, egg in pairs(CustomEggsFolder:GetChildren()) do checkEgg(egg, true) end
         end
     end
 
-    -- 3. Fallback: Nếu không nằm trong __THINGS, quét toàn workspace các model chứa ProximityPrompt hoặc tên chứa Egg
     if not bestEgg then
         for _, obj in pairs(workspace:GetChildren()) do
             if obj.Name == "Eggs" or obj.Name == "CustomEggs" then
-                for _, egg in pairs(obj:GetChildren()) do
-                    checkEgg(egg, false)
-                end
+                for _, egg in pairs(obj:GetChildren()) do checkEgg(egg, false) end
             end
         end
     end
@@ -262,14 +299,13 @@ local function getNearestEgg()
 end
 
 --========================================================================
--- 6. HÀM THỰC THI MỞ TRỨNG (MULTI-REMOTE PROTOCOL)
+-- 7. HÀM THỰC THI MỞ TRỨNG
 --========================================================================
 local function hatchEgg(eggObj, eggId, amount, isCustom)
     local amt = tonumber(amount) or 1
     local id = tostring(eggId)
     local success = false
 
-    -- 1. Gọi qua Network module của PS99 (Chuẩn nhất)
     if Network and typeof(Network.Invoke) == "function" then
         if isCustom then
             pcall(function()
@@ -308,7 +344,6 @@ local function hatchEgg(eggObj, eggId, amount, isCustom)
         end
     end
 
-    -- 2. Gọi trực tiếp RemoteFunction trong ReplicatedStorage.Network
     if not success then
         local netFolder = RS:FindFirstChild("Network")
         if netFolder then
@@ -316,55 +351,33 @@ local function hatchEgg(eggObj, eggId, amount, isCustom)
             local rfCustom = netFolder:FindFirstChild("CustomEggs_Hatch")
 
             if isCustom and rfCustom then
-                pcall(function()
-                    rfCustom:InvokeServer(eggObj and eggObj.Name or id, amt)
-                    success = true
-                end)
+                pcall(function() rfCustom:InvokeServer(eggObj and eggObj.Name or id, amt) success = true end)
             elseif rfEggs then
-                pcall(function()
-                    rfEggs:InvokeServer(id, amt)
-                    success = true
-                end)
+                pcall(function() rfEggs:InvokeServer(id, amt) success = true end)
             end
-
             if not success and rfCustom then
-                pcall(function()
-                    rfCustom:InvokeServer(id, amt)
-                    success = true
-                end)
+                pcall(function() rfCustom:InvokeServer(id, amt) success = true end)
             end
             if not success and rfEggs then
-                pcall(function()
-                    rfEggs:InvokeServer(id, amt)
-                    success = true
-                end)
+                pcall(function() rfEggs:InvokeServer(id, amt) success = true end)
             end
         end
     end
 
-    -- 3. Gọi qua Module EggCmds
     if not success and EggCmds and typeof(EggCmds) == "table" then
         pcall(function()
-            if EggCmds.Hatch then
-                EggCmds.Hatch(id, amt)
-                success = true
-            elseif EggCmds.Purchase then
-                EggCmds.Purchase(id, amt)
-                success = true
-            end
+            if EggCmds.Hatch then EggCmds.Hatch(id, amt) success = true
+            elseif EggCmds.Purchase then EggCmds.Purchase(id, amt) success = true end
         end)
     end
 
-    -- 4. Kích hoạt ProximityPrompt của quả trứng nếu đứng cạnh
     if not success and eggObj then
         pcall(function()
             for _, prompt in pairs(eggObj:GetDescendants()) do
-                if prompt:IsA("ProximityPrompt") and prompt.Enabled then
-                    if fireproximityprompt then
-                        fireproximityprompt(prompt)
-                        success = true
-                        break
-                    end
+                if prompt:IsA("ProximityPrompt") and prompt.Enabled and fireproximityprompt then
+                    fireproximityprompt(prompt)
+                    success = true
+                    break
                 end
             end
         end)
@@ -374,89 +387,8 @@ local function hatchEgg(eggObj, eggId, amount, isCustom)
 end
 
 --========================================================================
--- 7. CHỐNG VĂNG GAME TOÀN DIỆN (ANTI-AFK & AUTO-RECONNECT)
+-- 8. TẠO GIAO DIỆN ĐIỀU KHIỂN (UI)
 --========================================================================
-local function initAntiAFK()
-    -- Vô hiệu hóa event Idled qua getconnections (nếu executor có hỗ trợ)
-    pcall(function()
-        if typeof(getconnections) == "function" then
-            for _, conn in pairs(getconnections(Player.Idled)) do
-                if conn.Disable then conn:Disable() end
-            end
-        end
-    end)
-
-    -- Phản hồi tự động khi người chơi treo máy (Idled)
-    Player.Idled:Connect(function()
-        pcall(function()
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new(0, 0))
-        end)
-    end)
-
-    -- Giữ nhịp tương tác định kỳ mỗi 90 giây
-    task.spawn(function()
-        while true do
-            task.wait(90)
-            pcall(function()
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(Vector2.new(10, 10))
-            end)
-        end
-    end)
-
-    -- Tự động kết nối lại (Auto Reconnect) khi bị ngắt mạng hoặc kick
-    pcall(function()
-        GuiService.ErrorMessageChanged:Connect(function()
-            local code = GuiService:GetErrorCode()
-            if code and code.Value > 0 then
-                task.wait(5)
-                pcall(function()
-                    TeleportService:Teleport(game.PlaceId, Player)
-                end)
-            end
-        end)
-    end)
-
-    task.spawn(function()
-        while true do
-            task.wait(5)
-            pcall(function()
-                local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
-                if promptGui then
-                    local overlay = promptGui:FindFirstChild("promptOverlay")
-                    if overlay and overlay:FindFirstChild("ErrorPrompt") then
-                        task.wait(3)
-                        TeleportService:Teleport(game.PlaceId, Player)
-                    end
-                end
-            end)
-        end
-    end)
-end
-
-initAntiAFK()
-
---========================================================================
--- 8. GIAO DIỆN ĐIỀU KHIỂN (MODERN COMPACT DRAGGABLE GUI)
---========================================================================
-local function getGuiContainer()
-    if typeof(gethui) == "function" then
-        local h = gethui()
-        if h then return h end
-    end
-    local ok, core = pcall(function() return CoreGui end)
-    if ok and core then
-        local test = pcall(function()
-            local f = Instance.new("Folder")
-            f.Parent = core
-            f:Destroy()
-        end)
-        if test then return core end
-    end
-    return Player:WaitForChild("PlayerGui")
-end
-
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "PS99_PSXClassic_FastHatch"
 ScreenGui.ResetOnSpawn = false
@@ -467,13 +399,12 @@ pcall(function()
         syn.protect_gui(ScreenGui)
     end
 end)
-ScreenGui.Parent = getGuiContainer()
+ScreenGui.Parent = GuiParent
 
--- KHUNG CHÍNH (MAIN FRAME)
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 320, 0, 360)
-MainFrame.Position = UDim2.new(0.5, -160, 0.3, 0)
+MainFrame.Position = UDim2.new(0.5, -160, 0.25, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = true
@@ -488,31 +419,24 @@ MainStroke.Thickness = 1.5
 MainStroke.Color = Color3.fromRGB(50, 90, 180)
 MainStroke.Parent = MainFrame
 
--- HÀM KÉO THẢ GIAO DIỆN (DRAG SUPPORT MOBILE & PC)
 local function enableDragging(frame, dragHandle)
     local dragging = false
     local dragInput, dragStart, startPos
-
     dragHandle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = frame.Position
-
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
-
     dragHandle.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
             dragInput = input
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
         if input == dragInput and dragging then
             local delta = input.Position - dragStart
@@ -521,7 +445,6 @@ local function enableDragging(frame, dragHandle)
     end)
 end
 
--- THANH TIÊU ĐỀ (HEADER)
 local Header = Instance.new("Frame")
 Header.Size = UDim2.new(1, 0, 0, 42)
 Header.BackgroundColor3 = Color3.fromRGB(24, 30, 46)
@@ -556,7 +479,6 @@ SubTitle.Parent = Header
 
 enableDragging(MainFrame, Header)
 
--- NÚT THU GỌN GIAO DIỆN
 local btnMinimize = Instance.new("TextButton")
 btnMinimize.Size = UDim2.new(0, 28, 0, 28)
 btnMinimize.Position = UDim2.new(1, -34, 0, 7)
@@ -571,7 +493,6 @@ local btnMinCorner = Instance.new("UICorner")
 btnMinCorner.CornerRadius = UDim.new(0, 6)
 btnMinCorner.Parent = btnMinimize
 
--- NÚT NỔI THU NHỎ (FLOATING PILL KHI ĐÃ THU GỌN)
 local FloatingBtn = Instance.new("TextButton")
 FloatingBtn.Size = UDim2.new(0, 44, 0, 44)
 FloatingBtn.Position = UDim2.new(0.02, 0, 0.45, 0)
@@ -585,11 +506,6 @@ local FloatCorner = Instance.new("UICorner")
 FloatCorner.CornerRadius = UDim.new(1, 0)
 FloatCorner.Parent = FloatingBtn
 
-local FloatStroke = Instance.new("UIStroke")
-FloatStroke.Thickness = 2
-FloatStroke.Color = Color3.fromRGB(255, 255, 255)
-FloatStroke.Parent = FloatingBtn
-
 enableDragging(FloatingBtn, FloatingBtn)
 
 btnMinimize.Activated:Connect(function()
@@ -602,7 +518,6 @@ FloatingBtn.Activated:Connect(function()
     FloatingBtn.Visible = false
 end)
 
--- NỘI DUNG CHÍNH (CONTENT CONTAINER)
 local Content = Instance.new("Frame")
 Content.Size = UDim2.new(1, -20, 1, -52)
 Content.Position = UDim2.new(0, 10, 0, 48)
@@ -614,7 +529,6 @@ ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
 ContentLayout.Padding = UDim.new(0, 7)
 ContentLayout.Parent = Content
 
--- CARD THÔNG TIN TRỨNG & TRẠNG THÁI
 local InfoCard = Instance.new("Frame")
 InfoCard.Size = UDim2.new(1, 0, 0, 68)
 InfoCard.BackgroundColor3 = Color3.fromRGB(26, 32, 48)
@@ -658,7 +572,6 @@ lblHatchedCount.TextSize = 10
 lblHatchedCount.TextXAlignment = Enum.TextXAlignment.Left
 lblHatchedCount.Parent = InfoCard
 
--- NÚT BẬT / TẮT AUTO MỞ TRỨNG (MAIN ACTION BUTTON)
 local btnToggleHatch = Instance.new("TextButton")
 btnToggleHatch.Size = UDim2.new(1, 0, 0, 42)
 btnToggleHatch.BackgroundColor3 = Color3.fromRGB(40, 170, 80)
@@ -678,27 +591,12 @@ btnToggleHatch.Activated:Connect(function()
     if STATE.AutoHatch then
         btnToggleHatch.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
         btnToggleHatch.Text = "🛑 DỪNG AUTO MỞ TRỨNG"
-        pcall(function()
-            StarterGui:SetCore("SendNotification", {
-                Title = "⚡ PS99 Fast Hatch",
-                Text = "Đã BẬT Auto mở trứng siêu tốc!",
-                Duration = 2
-            })
-        end)
     else
         btnToggleHatch.BackgroundColor3 = Color3.fromRGB(40, 170, 80)
         btnToggleHatch.Text = "▶️ BẬT AUTO MỞ TRỨNG"
-        pcall(function()
-            StarterGui:SetCore("SendNotification", {
-                Title = "⚡ PS99 Fast Hatch",
-                Text = "Đã TẮT Auto mở trứng!",
-                Duration = 2
-            })
-        end)
     end
 end)
 
--- HÀM TẠO NÚT TOGGLE TIỆN ÍCH
 local function createToggleRow(order, title, initialVal, onToggle)
     local Row = Instance.new("Frame")
     Row.Size = UDim2.new(1, 0, 0, 34)
@@ -742,24 +640,18 @@ local function createToggleRow(order, title, initialVal, onToggle)
         ToggleBtn.Text = isEnabled and "BẬT" or "TẮT"
         onToggle(isEnabled)
     end)
-
     return Row
 end
 
--- 1. Bỏ qua hoạt ảnh (Skip Animation)
 createToggleRow(3, "🚀 Bỏ qua Hoạt Ảnh (Mở Siêu Tốc)", STATE.SkipAnimation, function(val)
     STATE.SkipAnimation = val
-    if val then
-        disableEggAnimations()
-    end
+    if val then disableEggAnimations() end
 end)
 
--- 2. Tự động mở số trứng tối đa (Max Hatch Slots)
 createToggleRow(4, "🔢 Tự Động Mở Max Trứng (Max Slots)", STATE.AutoMaxHatch, function(val)
     STATE.AutoMaxHatch = val
 end)
 
--- 3. Màn đen tiết kiệm CPU / Pin khi cắm qua đêm (Low CPU Mode)
 local BlackScreenGui = nil
 createToggleRow(5, "🔋 Chế Độ Màn Đen (Tiết Kiệm Pin / CPU)", STATE.LowCpuMode, function(val)
     STATE.LowCpuMode = val
@@ -785,33 +677,74 @@ createToggleRow(5, "🔋 Chế Độ Màn Đen (Tiết Kiệm Pin / CPU)", STATE
                 if BlackScreenGui then BlackScreenGui:Destroy() BlackScreenGui = nil end
             end)
 
-            BlackScreenGui.Parent = getGuiContainer()
+            BlackScreenGui.Parent = GuiParent
         end
     else
-        if BlackScreenGui then
-            BlackScreenGui:Destroy()
-            BlackScreenGui = nil
+        if BlackScreenGui then BlackScreenGui:Destroy() BlackScreenGui = nil end
+    end
+end)
+
+--========================================================================
+-- 9. ANTI-AFK & AUTO-RECONNECT
+--========================================================================
+pcall(function()
+    if typeof(getconnections) == "function" then
+        for _, conn in pairs(getconnections(Player.Idled)) do
+            if conn.Disable then conn:Disable() end
         end
     end
 end)
 
--- DÒNG HƯỚNG DẪN DƯỚI CÙNG
-local FooterNotice = Instance.new("TextLabel")
-FooterNotice.Size = UDim2.new(1, 0, 0, 32)
-FooterNotice.BackgroundTransparency = 1
-FooterNotice.Text = "💡 Chỉ cần đi tới đứng cạnh bất kỳ quả trứng nào ở Event PSX Classic hoặc Main World, script sẽ tự nhận diện và mở siêu tốc!"
-FooterNotice.TextColor3 = Color3.fromRGB(140, 150, 175)
-FooterNotice.Font = Enum.Font.Gotham
-FooterNotice.TextSize = 9
-FooterNotice.TextWrapped = true
-FooterNotice.LayoutOrder = 6
-FooterNotice.Parent = Content
+Player.Idled:Connect(function()
+    pcall(function()
+        if VirtualUser then
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(90)
+        pcall(function()
+            if VirtualUser then
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new(10, 10))
+            end
+        end)
+    end
+end)
+
+pcall(function()
+    GuiService.ErrorMessageChanged:Connect(function()
+        local code = GuiService:GetErrorCode()
+        if code and code.Value > 0 then
+            task.wait(5)
+            pcall(function() TeleportService:Teleport(game.PlaceId, Player) end)
+        end
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(5)
+        pcall(function()
+            local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
+            if promptGui then
+                local overlay = promptGui:FindFirstChild("promptOverlay")
+                if overlay and overlay:FindFirstChild("ErrorPrompt") then
+                    task.wait(3)
+                    TeleportService:Teleport(game.PlaceId, Player)
+                end
+            end
+        end)
+    end
+end)
 
 --========================================================================
--- 9. VÒNG LẶP CHÍNH (MAIN AUTO HATCH LOOP & SCANNER)
+-- 10. VÒNG LẶP CHÍNH (QUÉT TRỨNG & MỞ LIÊN TỤC)
 --========================================================================
-
--- Quét quả trứng gần nhất mỗi 0.5s
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -833,7 +766,6 @@ task.spawn(function()
     end
 end)
 
--- Vòng lặp bỏ qua hoạt ảnh liên tục
 task.spawn(function()
     while true do
         task.wait(0.2)
@@ -844,7 +776,6 @@ task.spawn(function()
     end
 end)
 
--- VÒNG LẶP MỞ TRỨNG SIÊU TỐC
 task.spawn(function()
     while true do
         task.wait(STATE.HatchSpeed)
@@ -854,7 +785,6 @@ task.spawn(function()
                     local eggObj = STATE.CurrentEggObj
                     local eggName = STATE.CurrentEggName
                     local isCustom = STATE.IsCustomEgg
-
                     local hatchAmt = STATE.AutoMaxHatch and getMaxHatch() or (tonumber(STATE.CustomHatchAmount) or 1)
 
                     local ok = hatchEgg(eggObj, eggName, hatchAmt, isCustom)
@@ -868,12 +798,11 @@ task.spawn(function()
     end
 end)
 
--- Thông báo chạy thành công
 pcall(function()
     StarterGui:SetCore("SendNotification", {
         Title = "⚡ PS99 PSX Classic Ready",
-        Text = "Đã khởi chạy Script Auto Hatch & Anti-AFK!",
+        Text = "Menu đã sẵn sàng! Đứng gần trứng và bấm BẬT.",
         Duration = 3
     })
 end)
-print("[PS99 Script] PSX Classic Fast Auto Hatch & Anti-AFK loaded successfully!")
+print("[PS99 Script] PSX Classic Fast Auto Hatch & Anti-AFK V1.1 loaded successfully!")
